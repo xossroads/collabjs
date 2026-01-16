@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <title>CollabJS - Collaborative Code Editor</title>
+  <link rel="stylesheet" href="/src/styles.css">
+</head>
+<body>
+  <div id="app">
+    <header id="header">
+      <h1>CollabJS</h1>
+      <div id="user-info">
+        <span id="username-display"></span>
+        <button id="change-username">Change Name</button>
+      </div>
+      <div id="room-info">
+        Room: <span id="room-id"></span>
+      </div>
+      <div id="theme-picker">
+        <label for="theme-select">Theme:</label>
+        <select id="theme-select"></select>
+      </div>
+      <div id="connected-users"></div>
+      <button id="run-btn">Run</button>
+    </header>
+    <div id="main-container">
+      <div id="editor-container"></div>
+      <div id="resize-handle">
+        <div class="resize-grip"></div>
+      </div>
+      <div id="output-panel">
+        <div id="output-header">
+          <span>Console Output</span>
+          <button id="clear-output">Clear</button>
+        </div>
+        <div id="output-content"></div>
+      </div>
+    </div>
+    <footer id="footer">
+      <a href="https://github.com/YOUR_USERNAME/collabjs" target="_blank" rel="noopener" id="github-link">
+        <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
+        </svg>
+        GitHub
+      </a>
+      <button id="about-btn">About</button>
+    </footer>
+  </div>
+  <div id="username-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Set Your Username</h2>
+      <input type="text" id="username-input" placeholder="Enter username..." maxlength="20">
+      <div class="modal-buttons">
+        <button id="random-name-btn">Random Name</button>
+        <button id="save-name-btn">Save</button>
+      </div>
+    </div>
+  </div>
+  <div id="about-modal" class="modal hidden">
+    <div class="modal-content about-content">
+      <h2>About CollabJS</h2>
+      <div class="about-scroll">
+        <p>CollabJS is a real-time collaborative JavaScript code editor built for technical interviews, pair programming, and live coding sessions. Multiple users can write and edit code simultaneously in the same document with zero conflicts.</p>
+
+        <h3>How It Works</h3>
+        <ul>
+          <li><strong>Share the URL</strong> - Send your room link to collaborators. Anyone with the link can join instantly.</li>
+          <li><strong>Code together</strong> - All changes sync in real-time. See other users' cursors and selections as they type.</li>
+          <li><strong>Run and share results</strong> - Execute JavaScript code and everyone sees the console output together.</li>
+        </ul>
+
+        <h3>Features</h3>
+        <ul>
+          <li><strong>Conflict-free editing</strong> - Built on CRDT technology, so simultaneous edits never clash</li>
+          <li><strong>Live cursors</strong> - See exactly where others are typing and selecting</li>
+          <li><strong>Shared console</strong> - Run code and view output together in real-time</li>
+          <li><strong>Syntax validation</strong> - Catch syntax errors before running with accurate line numbers</li>
+          <li><strong>Multiple themes</strong> - Choose from various editor color schemes</li>
+          <li><strong>Persistent sessions</strong> - Code is saved automatically; rejoin anytime with the same URL</li>
+        </ul>
+
+        <h3>Use Cases</h3>
+        <ul>
+          <li><strong>Technical interviews</strong> - Watch candidates code in real-time</li>
+          <li><strong>Pair programming</strong> - Collaborate with teammates remotely</li>
+          <li><strong>Teaching</strong> - Demonstrate code to students who can follow along</li>
+          <li><strong>Code reviews</strong> - Walk through code changes together live</li>
+        </ul>
+
+        <h3>Keyboard Shortcuts</h3>
+        <ul>
+          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Enter</kbd> - Run code</li>
+          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Z</kbd> - Undo</li>
+          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> - Redo</li>
+          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>F</kbd> - Find in editor</li>
+        </ul>
+
+        <h3>Built With</h3>
+        <p>Y.js (CRDT), Hocuspocus, CodeMirror 6, TypeScript, Vite, Acorn</p>
+      </div>
+      <div class="modal-buttons">
+        <button id="close-about-btn">Close</button>
+      </div>
+    </div>
+  </div>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

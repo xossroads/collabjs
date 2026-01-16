@@ -1,0 +1,36 @@
+{
+  "name": "collabjs",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "server",
+    "client",
+    "shared"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
+    "dev:server": "npm run dev --workspace=server",
+    "dev:client": "npm run dev --workspace=client",
+    "build": "npm run build:client && npm run build:server",
+    "build:client": "npm run build --workspace=client",
+    "build:server": "npm run build --workspace=server",
+    "start": "NODE_ENV=production node server/dist/index.js",
+    "db:migrate": "psql $DATABASE_URL -f ./server/src/schema.sql"
+  },
+  "dependencies": {
+    "@hocuspocus/extension-database": "^2.11.2",
+    "@hocuspocus/server": "^2.11.2",
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "pg": "^8.11.3",
+    "yjs": "^13.6.10"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "typescript": "^5.3.3"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
