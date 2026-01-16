@@ -153,12 +153,24 @@ npm run db:migrate   # Run database migrations
 
 ## Contributing
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+CollabJS is open source and contributions are welcome! Whether it's bug fixes, new features, documentation improvements, or feedback - we appreciate all contributions.
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## License
 
-MIT
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+This means you are free to:
+- Use the software for any purpose
+- Modify the source code
+- Distribute copies
+- Use it commercially
 
 ---
 
-Built with Y.js, Hocuspocus, CodeMirror 6, TypeScript, Vite, and Acorn.
+**CollabJS** is free and open source software built with Y.js, Hocuspocus, CodeMirror 6, TypeScript, Vite, and Acorn.
