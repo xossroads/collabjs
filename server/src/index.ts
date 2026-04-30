@@ -2,6 +2,7 @@ import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
@@ -66,8 +67,84 @@ const hocuspocus = Server.configure({
 // Express app setup
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Trust the reverse proxy (nginx) so rate limits key off the real client IP
+// from X-Forwarded-For instead of the proxy IP.
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
+
+// CORS allowlist. In dev the Vite client runs on a different port (5173) and
+// needs to talk to the API on 3001, so we allow that origin explicitly. In
+// prod everything is same-origin behind nginx, so we can lock CORS down to
+// the configured ALLOWED_ORIGINS list (comma-separated).
+const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+const allowedOrigins: string[] = allowedOriginsEnv
+  ? allowedOriginsEnv.split(',').map((o) => o.trim()).filter(Boolean)
+  : isProduction
+    ? []
+    : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Same-origin requests (no Origin header) are always allowed.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.length === 0) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Disallowed: omit the Access-Control-Allow-Origin header so the
+      // browser's SOP blocks the response. Don't throw — that turns into a
+      // 500 and gives the caller more information than they need.
+      callback(null, false);
+    },
+  })
+);
+
+// Cap request bodies. The endpoints accept tiny JSON objects; anything bigger
+// is abuse.
+app.use(express.json({ limit: '2kb' }));
+
+// Rate limit anything under /api/. Defaults to 60 req/min per IP — well above
+// what the legitimate client sends (one user/activity post per minute) and
+// well below what a script can use to swamp the API.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+});
+app.use('/api/', apiLimiter);
+
+// --- Input validation helpers ------------------------------------------------
+// Awareness names and room IDs come from clients we don't trust. Validate
+// shape and length on every entry; reject rather than coerce.
+
+const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,64}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_USERNAME_LEN = 64;
+const MAX_KEYSTROKES_PER_REPORT = 100_000;
+
+function isString(v: unknown, max: number): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= max;
+}
+
+function isRoomId(v: unknown): v is string {
+  return typeof v === 'string' && ROOM_ID_RE.test(v);
+}
+
+function isUuid(v: unknown): v is string {
+  return typeof v === 'string' && UUID_RE.test(v);
+}
+
+function isCount(v: unknown): v is number {
+  return (
+    typeof v === 'number' &&
+    Number.isFinite(v) &&
+    v >= 0 &&
+    v <= MAX_KEYSTROKES_PER_REPORT &&
+    Number.isInteger(v)
+  );
+}
 
 // Serve static files in production
 if (isProduction) {
@@ -77,17 +154,22 @@ if (isProduction) {
 
 // Activity logging endpoint
 app.post('/api/activity', async (req, res) => {
+  const { roomId, username, keystrokeCount, inEditor } = req.body ?? {};
+
+  if (
+    !isRoomId(roomId) ||
+    !isString(username, MAX_USERNAME_LEN) ||
+    !isCount(keystrokeCount) ||
+    typeof inEditor !== 'boolean'
+  ) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
   if (!dbAvailable) {
     return res.json({ success: true, persisted: false });
   }
 
   try {
-    const { roomId, username, keystrokeCount, inEditor } = req.body;
-
-    if (!roomId || !username || keystrokeCount === undefined) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
     await logActivity(roomId, username, keystrokeCount, inEditor);
     res.json({ success: true, persisted: true });
   } catch (error) {
@@ -98,17 +180,17 @@ app.post('/api/activity', async (req, res) => {
 
 // User registration/update endpoint
 app.post('/api/user', async (req, res) => {
+  const { username, clientId } = req.body ?? {};
+
+  if (!isString(username, MAX_USERNAME_LEN) || !isUuid(clientId)) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
   if (!dbAvailable) {
     return res.json({ success: true, persisted: false });
   }
 
   try {
-    const { username, clientId } = req.body;
-
-    if (!username || !clientId) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
     await upsertUser(username, clientId);
     res.json({ success: true, persisted: true });
   } catch (error) {
