@@ -3,6 +3,21 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    Strict CSP for the parent page. The sandbox iframe loads /sandbox/runner.html
+    which is a separate document with its own (absent) CSP, so the `new Function`
+    we need to run user code is scoped there and not blocked here.
+
+    style-src needs 'unsafe-inline' because CodeMirror injects <style> elements
+    and inline style="" attributes at runtime — there is no nonce/hash path for
+    that without forking CodeMirror. Inline-style XSS is far less dangerous
+    than inline-script XSS, so this is an acceptable trade.
+
+    connect-src allows ws:/wss: globally to keep the same policy working in dev
+    (Vite HMR + Hocuspocus on a different port) and prod (Hocuspocus over wss).
+    Tighten to specific hosts at deploy time if you want stricter exfil control.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <link rel="preload" href="/collabJS.png" as="image">
   <title>CollabJS - Collaborative Code Editor</title>

@@ -99,6 +99,19 @@ app.use(
   })
 );
 
+// Security response headers. CSP itself lives in a <meta> tag in index.html
+// because the dev server (Vite) bypasses Express, but a few headers can only
+// be set at the response level — set them here for production. The sandbox
+// iframe is loaded via iframe.src to a same-origin runner, so SAMEORIGIN
+// (rather than DENY) is the strictest setting that still permits it.
+app.use((_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  next();
+});
+
 // Cap request bodies. The endpoints accept tiny JSON objects; anything bigger
 // is abuse.
 app.use(express.json({ limit: '2kb' }));

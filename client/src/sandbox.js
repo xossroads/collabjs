@@ -7,83 +7,14 @@
 // own APIs as the logged-in user. Top navigation, popups, and form submission
 // are also blocked because we don't grant those tokens.
 //
+// We load the runner via `iframe.src` (not `srcdoc`) so the parent's CSP
+// doesn't apply to it. The runner needs `new Function` to execute user code
+// (which CSP would block under `unsafe-eval`), and keeping that scoped to the
+// iframe means the parent can run a strict CSP without `unsafe-eval`.
+//
 // IMPORTANT: never add `allow-same-origin` to this sandbox. Doing so removes
 // the opaque-origin protection and re-exposes everything above.
-const RUNNER_HTML = `<!DOCTYPE html>
-<html>
-<head><meta charset="utf-8"></head>
-<body>
-<script>
-(function () {
-  'use strict';
-
-  function stringify(value) {
-    if (value === undefined) return 'undefined';
-    if (value === null) return 'null';
-    if (typeof value === 'function') return value.toString();
-    if (typeof value === 'object') {
-      try { return JSON.stringify(value, null, 2); }
-      catch (_) { return String(value); }
-    }
-    return String(value);
-  }
-
-  function send(msg) {
-    parent.postMessage(msg, '*');
-  }
-
-  var sandboxConsole = {
-    log:   function () { send({ kind: 'log',   content: Array.prototype.map.call(arguments, stringify).join(' ') }); },
-    error: function () { send({ kind: 'error', content: Array.prototype.map.call(arguments, stringify).join(' ') }); },
-    warn:  function () { send({ kind: 'warn',  content: Array.prototype.map.call(arguments, stringify).join(' ') }); },
-    info:  function () { send({ kind: 'info',  content: Array.prototype.map.call(arguments, stringify).join(' ') }); }
-  };
-
-  window.addEventListener('message', function (e) {
-    var data = e.data;
-    if (!data || data.kind !== 'execute') return;
-    var code = String(data.code || '');
-
-    try {
-      var fn = new Function('console', code);
-      var result = fn(sandboxConsole);
-      if (result !== undefined) {
-        send({ kind: 'result', content: stringify(result) });
-      }
-      send({ kind: 'done' });
-    } catch (err) {
-      var msg;
-      if (err instanceof Error) {
-        msg = err.name + ': ' + err.message;
-        var lineMatch = err.stack && err.stack.match(/<anonymous>:(\\d+):/);
-        if (lineMatch) {
-          var offset = err instanceof SyntaxError ? 1 : 2;
-          var line = parseInt(lineMatch[1], 10) - offset;
-          if (line > 0) msg += ' (line ' + line + ')';
-        }
-      } else {
-        msg = String(err);
-      }
-      send({ kind: 'error', content: msg });
-      send({ kind: 'done' });
-    }
-  });
-
-  window.addEventListener('error', function (e) {
-    send({ kind: 'error', content: 'UncaughtError: ' + e.message });
-  });
-
-  window.addEventListener('unhandledrejection', function (e) {
-    var reason = e.reason;
-    var content = (reason && reason.message) ? reason.message : String(reason);
-    send({ kind: 'error', content: 'UnhandledRejection: ' + content });
-  });
-
-  send({ kind: 'ready' });
-})();
-</script>
-</body>
-</html>`;
+const RUNNER_URL = '/sandbox/runner.html';
 export class Sandbox {
     iframe = null;
     messageHandler = null;
@@ -100,7 +31,7 @@ export class Sandbox {
         iframe.setAttribute('sandbox', 'allow-scripts');
         iframe.setAttribute('aria-hidden', 'true');
         iframe.style.display = 'none';
-        iframe.srcdoc = RUNNER_HTML;
+        iframe.src = RUNNER_URL;
         this.pendingCode = code;
         this.iframe = iframe;
         const handleMessage = (e) => {
