@@ -59,9 +59,14 @@ export class SharedConsole {
 
   private validateSyntax(code: string): SyntaxErrorInfo | null {
     try {
+      // allowReturnOutsideFunction matches `new Function` semantics in the
+      // sandbox runner: the user's code runs as a function body, so top-level
+      // `return foo` is valid execution-wise. Without this flag Acorn would
+      // reject it and the runner never gets a chance.
       acorn.parse(code, {
         ecmaVersion: 'latest',
         sourceType: 'script',
+        allowReturnOutsideFunction: true,
       });
       return null;
     } catch (e: unknown) {
