@@ -7,7 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
 import { startCleanupJob } from './cleanup.js';
-import { getClientIp, requestLogger } from './logging.js';
+import { getClientIp, requestLogger, sanitizeForLog } from './logging.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -19,6 +19,24 @@ const isProduction = NODE_ENV === 'production';
 
 // Track if database is available
 let dbAvailable = false;
+
+// Mirror of the client-side room-ID regex. Reject any documentName that
+// doesn't match — Hocuspocus would otherwise accept whatever string a client
+// sends (including newlines, slashes, or strings long enough to break the
+// VARCHAR(255) on the documents table).
+const DOCUMENT_NAME_RE = /^[a-zA-Z0-9-]{1,128}$/;
+
+// Per-IP cap on concurrent WebSocket connections. Without this, one client
+// can open thousands of WS connections and pin server memory. The default is
+// generous (20) because legitimate users may have multiple tabs; tune via
+// MAX_WS_CONNECTIONS_PER_IP if needed.
+const MAX_WS_PER_IP = (() => {
+  const raw = process.env.MAX_WS_CONNECTIONS_PER_IP;
+  if (!raw) return 20;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 20;
+})();
+const wsConnectionsByIp = new Map<string, number>();
 
 // Test database connection on startup
 testConnection().then(available => {
@@ -64,13 +82,43 @@ const hocuspocus = Server.configure({
 
   async onConnect({ documentName, request, requestHeaders, socketId }) {
     const ip = getClientIp(request, requestHeaders);
-    console.log(`WS connect room=${documentName} socket=${socketId} ip=${ip}`);
+
+    // Reject malformed document names. Throwing rejects the connection.
+    if (!DOCUMENT_NAME_RE.test(documentName)) {
+      console.warn(
+        `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
+      );
+      throw new Error('Invalid document name');
+    }
+
+    // Enforce per-IP connection cap. Count is incremented here and decremented
+    // in onDisconnect, so a connection that throws here never gets counted.
+    const current = wsConnectionsByIp.get(ip) ?? 0;
+    if (current >= MAX_WS_PER_IP) {
+      console.warn(
+        `WS reject (over per-IP cap) ip=${sanitizeForLog(ip)} cap=${MAX_WS_PER_IP}`
+      );
+      throw new Error('Too many connections');
+    }
+    wsConnectionsByIp.set(ip, current + 1);
+
+    console.log(
+      `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${current + 1}`
+    );
   },
 
   async onDisconnect({ documentName, requestHeaders, socketId, clientsCount }) {
     const ip = getClientIp(undefined, requestHeaders);
+
+    const current = wsConnectionsByIp.get(ip) ?? 0;
+    if (current <= 1) {
+      wsConnectionsByIp.delete(ip);
+    } else {
+      wsConnectionsByIp.set(ip, current - 1);
+    }
+
     console.log(
-      `WS disconnect room=${documentName} socket=${socketId} ip=${ip} remaining=${clientsCount}`
+      `WS disconnect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} remaining=${clientsCount}`
     );
   },
 });
