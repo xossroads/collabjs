@@ -1,5 +1,6 @@
 import * as Y from 'yjs';
 import * as acorn from 'acorn';
+import { Sandbox, SandboxMessage } from './sandbox';
 
 export type LogType = 'log' | 'error' | 'warn' | 'info' | 'result' | 'system';
 
@@ -21,6 +22,7 @@ export class SharedConsole {
   private yarray: Y.Array<LogEntry>;
   private container: HTMLElement;
   private getUsername: () => string;
+  private sandbox: Sandbox;
 
   constructor(ydoc: Y.Doc, container: HTMLElement, getUsername: () => string) {
     this.ydoc = ydoc;
@@ -30,12 +32,28 @@ export class SharedConsole {
     // Get or create the shared array for console logs
     this.yarray = ydoc.getArray<LogEntry>('console-logs');
 
+    this.sandbox = new Sandbox(
+      (msg) => this.handleSandboxMessage(msg),
+      () => {}
+    );
+
     // Render existing logs
     this.render();
 
     // Listen for changes from other users
     this.yarray.observe(() => {
       this.render();
+    });
+  }
+
+  private handleSandboxMessage(msg: SandboxMessage): void {
+    const username = this.getUsername();
+    const content = msg.kind === 'result' ? `← ${msg.content}` : msg.content;
+    this.addLog({
+      type: msg.kind,
+      content,
+      username,
+      timestamp: Date.now(),
     });
   }
 
@@ -89,110 +107,9 @@ export class SharedConsole {
       timestamp: Date.now(),
     });
 
-    // Create a sandboxed console that captures output
-    const capturedLogs: LogEntry[] = [];
-
-    const sandboxConsole = {
-      log: (...args: unknown[]) => {
-        capturedLogs.push({
-          type: 'log',
-          content: args.map(this.stringify).join(' '),
-          username,
-          timestamp: Date.now(),
-        });
-      },
-      error: (...args: unknown[]) => {
-        capturedLogs.push({
-          type: 'error',
-          content: args.map(this.stringify).join(' '),
-          username,
-          timestamp: Date.now(),
-        });
-      },
-      warn: (...args: unknown[]) => {
-        capturedLogs.push({
-          type: 'warn',
-          content: args.map(this.stringify).join(' '),
-          username,
-          timestamp: Date.now(),
-        });
-      },
-      info: (...args: unknown[]) => {
-        capturedLogs.push({
-          type: 'info',
-          content: args.map(this.stringify).join(' '),
-          username,
-          timestamp: Date.now(),
-        });
-      },
-    };
-
-    try {
-      // Create function with sandboxed console
-      const fn = new Function('console', code);
-      const result = fn(sandboxConsole);
-
-      // Add captured logs to shared array
-      capturedLogs.forEach((log) => this.addLog(log));
-
-      // Show return value if not undefined
-      if (result !== undefined) {
-        this.addLog({
-          type: 'result',
-          content: `← ${this.stringify(result)}`,
-          username,
-          timestamp: Date.now(),
-        });
-      }
-    } catch (error) {
-      // Add any logs that happened before the error
-      capturedLogs.forEach((log) => this.addLog(log));
-
-      // Safely extract error message
-      let errorMessage = '';
-      try {
-        if (error instanceof Error) {
-          errorMessage = `${error.name}: ${error.message}`;
-
-          // Try to extract line number from stack trace
-          const lineMatch = error.stack?.match(/<anonymous>:(\d+):/);
-          if (lineMatch) {
-            const offset = error instanceof SyntaxError ? 1 : 2;
-            const line = parseInt(lineMatch[1], 10) - offset;
-            if (line > 0) {
-              errorMessage += ` (line ${line})`;
-            }
-          }
-        } else {
-          errorMessage = String(error);
-        }
-      } catch {
-        // If parsing fails, just show basic error
-        errorMessage = String(error);
-      }
-
-      // Add the error
-      this.addLog({
-        type: 'error',
-        content: errorMessage,
-        username,
-        timestamp: Date.now(),
-      });
-    }
-  }
-
-  private stringify(value: unknown): string {
-    if (value === undefined) return 'undefined';
-    if (value === null) return 'null';
-    if (typeof value === 'function') return value.toString();
-    if (typeof value === 'object') {
-      try {
-        return JSON.stringify(value, null, 2);
-      } catch {
-        return String(value);
-      }
-    }
-    return String(value);
+    // Hand off to the sandboxed iframe runner. Logs and errors stream back via
+    // postMessage and are appended to the Y.js array as they arrive.
+    this.sandbox.execute(code);
   }
 
   private addLog(entry: LogEntry): void {
@@ -230,5 +147,9 @@ export class SharedConsole {
     this.ydoc.transact(() => {
       this.yarray.delete(0, this.yarray.length);
     });
+  }
+
+  destroy(): void {
+    this.sandbox.destroy();
   }
 }

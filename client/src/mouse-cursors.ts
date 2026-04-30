@@ -112,15 +112,35 @@ export class MouseCursors {
   }
 
   private createCursorElement(user: UserState): HTMLElement {
+    // Build with DOM APIs only. `user.name` and `user.color` come from remote
+    // awareness state, which any room participant controls — string templating
+    // into innerHTML here would be a same-origin XSS sink.
     const textColor = shouldUseDarkText(user.color) ? '#1e1e1e' : '#ffffff';
     const cursor = document.createElement('div');
     cursor.className = 'remote-cursor';
-    cursor.innerHTML = `
-      <svg width="24" height="24" viewBox="0 0 24 24" style="fill: ${user.color}">
-        <path d="M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87c.48 0 .72-.58.38-.92L6.35 2.85a.5.5 0 0 0-.85.36Z"/>
-      </svg>
-      <span class="cursor-label" style="background-color: ${user.color}; color: ${textColor}">${user.name}</span>
-    `;
+
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('width', '24');
+    svg.setAttribute('height', '24');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.style.fill = user.color;
+
+    const path = document.createElementNS(SVG_NS, 'path');
+    path.setAttribute(
+      'd',
+      'M5.5 3.21V20.8c0 .45.54.67.85.35l4.86-4.86a.5.5 0 0 1 .35-.15h6.87c.48 0 .72-.58.38-.92L6.35 2.85a.5.5 0 0 0-.85.36Z'
+    );
+    svg.appendChild(path);
+
+    const label = document.createElement('span');
+    label.className = 'cursor-label';
+    label.style.backgroundColor = user.color;
+    label.style.color = textColor;
+    label.textContent = user.name;
+
+    cursor.appendChild(svg);
+    cursor.appendChild(label);
     return cursor;
   }
 

@@ -216,6 +216,7 @@ async function init() {
         mouseCursors.destroy();
         cleanupAwareness();
         activityTracker.destroy();
+        sharedConsole.destroy();
         editor.destroy();
     });
 }
