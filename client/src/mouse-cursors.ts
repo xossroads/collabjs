@@ -1,5 +1,6 @@
 import { Awareness } from 'y-protocols/awareness';
 import { shouldUseDarkText } from './username';
+import { sanitizeRemoteUser } from './sanitize';
 
 interface MousePosition {
   x: number;
@@ -10,6 +11,18 @@ interface UserState {
   name: string;
   color: string;
   mouse?: MousePosition;
+}
+
+function sanitizeMouse(value: unknown): MousePosition | null {
+  if (!value || typeof value !== 'object') return null;
+  const raw = value as { x?: unknown; y?: unknown };
+  if (typeof raw.x !== 'number' || typeof raw.y !== 'number') return null;
+  if (!Number.isFinite(raw.x) || !Number.isFinite(raw.y)) return null;
+  // Clamp to a generous viewport bound so a hostile client can't push the
+  // cursor element to absurd coordinates.
+  const x = Math.max(-10_000, Math.min(50_000, raw.x));
+  const y = Math.max(-10_000, Math.min(50_000, raw.y));
+  return { x, y };
 }
 
 export class MouseCursors {
@@ -73,9 +86,11 @@ export class MouseCursors {
       if (clientId === localClientId) return;
       if (!state.user || !state.mouse) return;
 
+      const user = sanitizeRemoteUser(state.user);
+      const mouse = sanitizeMouse(state.mouse);
+      if (!mouse) return;
+
       activeClientIds.add(clientId);
-      const user = state.user as UserState;
-      const mouse = state.mouse as MousePosition;
 
       let cursor = this.cursors.get(clientId);
 
