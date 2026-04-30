@@ -31,3 +31,8 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE INDEX IF NOT EXISTS idx_activity_room ON activity_logs(room_id);
 CREATE INDEX IF NOT EXISTS idx_activity_user ON activity_logs(username);
 CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_logs(recorded_at);
+
+-- Indexes supporting TTL cleanup. Without these, the periodic DELETE has to
+-- scan the whole table.
+CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
+CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen);

@@ -54,4 +54,31 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
+// TTL purges. Each takes the maximum age in days and returns the number of
+// rows deleted, so the caller can log it. Postgres's INTERVAL accepts an
+// integer cast at the parameter site to avoid SQL injection.
+export async function purgeStaleDocuments(maxAgeDays: number): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM documents WHERE updated_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [maxAgeDays]
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function purgeOldActivityLogs(maxAgeDays: number): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM activity_logs WHERE recorded_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [maxAgeDays]
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function purgeStaleUsers(maxAgeDays: number): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM users WHERE last_seen < NOW() - ($1::int * INTERVAL '1 day')`,
+    [maxAgeDays]
+  );
+  return result.rowCount ?? 0;
+}
+
 export { pool };

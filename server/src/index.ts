@@ -6,6 +6,7 @@ import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
+import { startCleanupJob } from './cleanup.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -27,6 +28,11 @@ testConnection().then(available => {
     console.log('Database not available - running without persistence');
   }
 });
+
+// Periodic TTL cleanup. The job reads dbAvailable on each tick so it picks
+// up a database that came online after startup, and no-ops if it's still
+// down.
+startCleanupJob(() => dbAvailable);
 
 // Hocuspocus server with PostgreSQL persistence
 const hocuspocus = Server.configure({
