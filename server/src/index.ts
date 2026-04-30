@@ -7,6 +7,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
 import { startCleanupJob } from './cleanup.js';
+import { getClientIp, requestLogger } from './logging.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -61,12 +62,16 @@ const hocuspocus = Server.configure({
     }),
   ],
 
-  async onConnect({ documentName }) {
-    console.log(`Client connected to room: ${documentName}`);
+  async onConnect({ documentName, request, requestHeaders, socketId }) {
+    const ip = getClientIp(request, requestHeaders);
+    console.log(`WS connect room=${documentName} socket=${socketId} ip=${ip}`);
   },
 
-  async onDisconnect({ documentName }) {
-    console.log(`Client disconnected from room: ${documentName}`);
+  async onDisconnect({ documentName, requestHeaders, socketId, clientsCount }) {
+    const ip = getClientIp(undefined, requestHeaders);
+    console.log(
+      `WS disconnect room=${documentName} socket=${socketId} ip=${ip} remaining=${clientsCount}`
+    );
   },
 });
 
@@ -78,6 +83,11 @@ const app = express();
 if (isProduction) {
   app.set('trust proxy', 1);
 }
+
+// Structured one-line-per-request log: method, path, status, duration, IP,
+// truncated UA. Goes to stdout. Sits before everything else so even rejected
+// requests (CORS, rate limit, validation 400) get logged.
+app.use(requestLogger);
 
 // CORS allowlist. In dev the Vite client runs on a different port (5173) and
 // needs to talk to the API on 3001, so we allow that origin explicitly. In
