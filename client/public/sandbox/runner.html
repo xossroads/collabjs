@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>sandbox</title>
+</head>
+<body>
+<!--
+  Loaded into a sandboxed iframe (sandbox="allow-scripts", no
+  allow-same-origin) by the parent page. The sandbox attribute gives this
+  document an opaque origin, so even though it's served from the same host
+  as the parent it cannot read the parent's cookies, localStorage, DOM, or
+  make credentialed requests to its own APIs as the logged-in user.
+
+  We're loaded via iframe.src (not srcdoc) so that the parent's CSP does
+  not apply here. That lets the parent run a strict CSP without unsafe-eval,
+  while we keep the `new Function` call we need to execute user code.
+-->
+<script>
+'use strict';
+
+const stringify = (value) => {
+  if (value === undefined) return 'undefined';
+  if (value === null) return 'null';
+  if (typeof value === 'function') return value.toString();
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value, null, 2); }
+    catch { return String(value); }
+  }
+  return String(value);
+};
+
+const send = (msg) => parent.postMessage(msg, '*');
+
+const captured = (kind) => (...args) =>
+  send({ kind, content: args.map(stringify).join(' ') });
+
+const sandboxConsole = {
+  log:   captured('log'),
+  error: captured('error'),
+  warn:  captured('warn'),
+  info:  captured('info'),
+};
+
+window.addEventListener('message', (e) => {
+  const data = e.data;
+  if (!data || data.kind !== 'execute') return;
+  const code = String(data.code ?? '');
+
+  try {
+    const fn = new Function('console', code);
+    const result = fn(sandboxConsole);
+    if (result !== undefined) {
+      send({ kind: 'result', content: stringify(result) });
+    }
+    send({ kind: 'done' });
+  } catch (err) {
+    let msg;
+    if (err instanceof Error) {
+      msg = `${err.name}: ${err.message}`;
+      const lineMatch = err.stack?.match(/<anonymous>:(\d+):/);
+      if (lineMatch) {
+        const offset = err instanceof SyntaxError ? 1 : 2;
+        const line = parseInt(lineMatch[1], 10) - offset;
+        if (line > 0) msg += ` (line ${line})`;
+      }
+    } else {
+      msg = String(err);
+    }
+    send({ kind: 'error', content: msg });
+    send({ kind: 'done' });
+  }
+});
+
+window.addEventListener('error', (e) => {
+  send({ kind: 'error', content: `UncaughtError: ${e.message}` });
+});
+
+window.addEventListener('unhandledrejection', (e) => {
+  const reason = e.reason;
+  const content = reason?.message ?? String(reason);
+  send({ kind: 'error', content: `UnhandledRejection: ${content}` });
+});
+
+send({ kind: 'ready' });
+</script>
+</body>
+</html>

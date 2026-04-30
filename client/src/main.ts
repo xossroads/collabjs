@@ -18,7 +18,9 @@ import {
   saveTheme,
 } from './themes';
 
-// Get room ID from URL or generate one
+// Get room ID from URL or generate one. The full UUID gives ~122 bits of
+// entropy — enough that a public deployment can't be enumerated by scanning.
+// The pre-existing 8-char slice was ~32 bits and easily brute-forceable.
 function getRoomId(): string {
   const path = window.location.pathname;
   const match = path.match(/^\/room\/([a-zA-Z0-9-]+)$/);
@@ -27,8 +29,7 @@ function getRoomId(): string {
     return match[1];
   }
 
-  // Generate a new room ID and redirect
-  const newRoomId = crypto.randomUUID().slice(0, 8);
+  const newRoomId = crypto.randomUUID();
   window.history.replaceState(null, '', `/room/${newRoomId}`);
   return newRoomId;
 }
@@ -269,6 +270,7 @@ async function init() {
     mouseCursors.destroy();
     cleanupAwareness();
     activityTracker.destroy();
+    sharedConsole.destroy();
     editor.destroy();
   });
 }

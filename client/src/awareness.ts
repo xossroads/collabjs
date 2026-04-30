@@ -1,17 +1,15 @@
 import type { Awareness } from 'y-protocols/awareness';
 import { shouldUseDarkText } from './username';
+import { sanitizeRemoteUser, SafeUser } from './sanitize';
 
-export interface UserState {
-  name: string;
-  color: string;
-}
+export type UserState = SafeUser;
 
 export function getConnectedUsers(awareness: Awareness): Map<number, UserState> {
   const users = new Map<number, UserState>();
 
   awareness.getStates().forEach((state, clientId) => {
     if (state.user && clientId !== awareness.clientID) {
-      users.set(clientId, state.user as UserState);
+      users.set(clientId, sanitizeRemoteUser(state.user));
     }
   });
 

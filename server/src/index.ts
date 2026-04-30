@@ -2,9 +2,12 @@ import { Server } from '@hocuspocus/server';
 import { Database } from '@hocuspocus/extension-database';
 import express from 'express';
 import cors from 'cors';
+import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
+import { startCleanupJob } from './cleanup.js';
+import { getClientIp, requestLogger, sanitizeForLog } from './logging.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -17,6 +20,24 @@ const isProduction = NODE_ENV === 'production';
 // Track if database is available
 let dbAvailable = false;
 
+// Mirror of the client-side room-ID regex. Reject any documentName that
+// doesn't match — Hocuspocus would otherwise accept whatever string a client
+// sends (including newlines, slashes, or strings long enough to break the
+// VARCHAR(255) on the documents table).
+const DOCUMENT_NAME_RE = /^[a-zA-Z0-9-]{1,128}$/;
+
+// Per-IP cap on concurrent WebSocket connections. Without this, one client
+// can open thousands of WS connections and pin server memory. The default is
+// generous (20) because legitimate users may have multiple tabs; tune via
+// MAX_WS_CONNECTIONS_PER_IP if needed.
+const MAX_WS_PER_IP = (() => {
+  const raw = process.env.MAX_WS_CONNECTIONS_PER_IP;
+  if (!raw) return 20;
+  const n = Number(raw);
+  return Number.isFinite(n) && n > 0 ? n : 20;
+})();
+const wsConnectionsByIp = new Map<string, number>();
+
 // Test database connection on startup
 testConnection().then(available => {
   dbAvailable = available;
@@ -26,6 +47,11 @@ testConnection().then(available => {
     console.log('Database not available - running without persistence');
   }
 });
+
+// Periodic TTL cleanup. The job reads dbAvailable on each tick so it picks
+// up a database that came online after startup, and no-ops if it's still
+// down.
+startCleanupJob(() => dbAvailable);
 
 // Hocuspocus server with PostgreSQL persistence
 const hocuspocus = Server.configure({
@@ -54,20 +80,148 @@ const hocuspocus = Server.configure({
     }),
   ],
 
-  async onConnect({ documentName }) {
-    console.log(`Client connected to room: ${documentName}`);
+  async onConnect({ documentName, request, requestHeaders, socketId }) {
+    const ip = getClientIp(request, requestHeaders);
+
+    // Reject malformed document names. Throwing rejects the connection.
+    if (!DOCUMENT_NAME_RE.test(documentName)) {
+      console.warn(
+        `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
+      );
+      throw new Error('Invalid document name');
+    }
+
+    // Enforce per-IP connection cap. Count is incremented here and decremented
+    // in onDisconnect, so a connection that throws here never gets counted.
+    const current = wsConnectionsByIp.get(ip) ?? 0;
+    if (current >= MAX_WS_PER_IP) {
+      console.warn(
+        `WS reject (over per-IP cap) ip=${sanitizeForLog(ip)} cap=${MAX_WS_PER_IP}`
+      );
+      throw new Error('Too many connections');
+    }
+    wsConnectionsByIp.set(ip, current + 1);
+
+    console.log(
+      `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${current + 1}`
+    );
   },
 
-  async onDisconnect({ documentName }) {
-    console.log(`Client disconnected from room: ${documentName}`);
+  async onDisconnect({ documentName, requestHeaders, socketId, clientsCount }) {
+    const ip = getClientIp(undefined, requestHeaders);
+
+    const current = wsConnectionsByIp.get(ip) ?? 0;
+    if (current <= 1) {
+      wsConnectionsByIp.delete(ip);
+    } else {
+      wsConnectionsByIp.set(ip, current - 1);
+    }
+
+    console.log(
+      `WS disconnect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} remaining=${clientsCount}`
+    );
   },
 });
 
 // Express app setup
 const app = express();
 
-app.use(cors());
-app.use(express.json());
+// Trust the reverse proxy (nginx) so rate limits key off the real client IP
+// from X-Forwarded-For instead of the proxy IP.
+if (isProduction) {
+  app.set('trust proxy', 1);
+}
+
+// Structured one-line-per-request log: method, path, status, duration, IP,
+// truncated UA. Goes to stdout. Sits before everything else so even rejected
+// requests (CORS, rate limit, validation 400) get logged.
+app.use(requestLogger);
+
+// CORS allowlist. In dev the Vite client runs on a different port (5173) and
+// needs to talk to the API on 3001, so we allow that origin explicitly. In
+// prod everything is same-origin behind nginx, so we can lock CORS down to
+// the configured ALLOWED_ORIGINS list (comma-separated).
+const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
+const allowedOrigins: string[] = allowedOriginsEnv
+  ? allowedOriginsEnv.split(',').map((o) => o.trim()).filter(Boolean)
+  : isProduction
+    ? []
+    : ['http://localhost:5173', 'http://127.0.0.1:5173'];
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      // Same-origin requests (no Origin header) are always allowed.
+      if (!origin) return callback(null, true);
+      if (allowedOrigins.length === 0) return callback(null, true);
+      if (allowedOrigins.includes(origin)) return callback(null, true);
+      // Disallowed: omit the Access-Control-Allow-Origin header so the
+      // browser's SOP blocks the response. Don't throw — that turns into a
+      // 500 and gives the caller more information than they need.
+      callback(null, false);
+    },
+  })
+);
+
+// Security response headers. CSP itself lives in a <meta> tag in index.html
+// because the dev server (Vite) bypasses Express, but a few headers can only
+// be set at the response level — set them here for production. The sandbox
+// iframe is loaded via iframe.src to a same-origin runner, so SAMEORIGIN
+// (rather than DENY) is the strictest setting that still permits it.
+app.use((_req, res, next) => {
+  res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=(), payment=()');
+  next();
+});
+
+// Cap request bodies. The endpoints accept tiny JSON objects; anything bigger
+// is abuse.
+app.use(express.json({ limit: '2kb' }));
+
+// Rate limit anything under /api/. Defaults to 60 req/min per IP — well above
+// what the legitimate client sends (one user/activity post per minute) and
+// well below what a script can use to swamp the API.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  limit: 60,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  message: { error: 'Too many requests' },
+});
+app.use('/api/', apiLimiter);
+
+// --- Input validation helpers ------------------------------------------------
+// Awareness names and room IDs come from clients we don't trust. Validate
+// shape and length on every entry; reject rather than coerce.
+
+const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,64}$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_USERNAME_LEN = 64;
+const MAX_KEYSTROKES_PER_REPORT = 100_000;
+
+function isString(v: unknown, max: number): v is string {
+  return typeof v === 'string' && v.length > 0 && v.length <= max;
+}
+
+function isRoomId(v: unknown): v is string {
+  return typeof v === 'string' && ROOM_ID_RE.test(v);
+}
+
+function isUuid(v: unknown): v is string {
+  return typeof v === 'string' && UUID_RE.test(v);
+}
+
+function isCount(v: unknown): v is number {
+  return (
+    typeof v === 'number' &&
+    Number.isFinite(v) &&
+    v >= 0 &&
+    v <= MAX_KEYSTROKES_PER_REPORT &&
+    Number.isInteger(v)
+  );
+}
 
 // Serve static files in production
 if (isProduction) {
@@ -77,17 +231,22 @@ if (isProduction) {
 
 // Activity logging endpoint
 app.post('/api/activity', async (req, res) => {
+  const { roomId, username, keystrokeCount, inEditor } = req.body ?? {};
+
+  if (
+    !isRoomId(roomId) ||
+    !isString(username, MAX_USERNAME_LEN) ||
+    !isCount(keystrokeCount) ||
+    typeof inEditor !== 'boolean'
+  ) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
   if (!dbAvailable) {
     return res.json({ success: true, persisted: false });
   }
 
   try {
-    const { roomId, username, keystrokeCount, inEditor } = req.body;
-
-    if (!roomId || !username || keystrokeCount === undefined) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
     await logActivity(roomId, username, keystrokeCount, inEditor);
     res.json({ success: true, persisted: true });
   } catch (error) {
@@ -98,17 +257,17 @@ app.post('/api/activity', async (req, res) => {
 
 // User registration/update endpoint
 app.post('/api/user', async (req, res) => {
+  const { username, clientId } = req.body ?? {};
+
+  if (!isString(username, MAX_USERNAME_LEN) || !isUuid(clientId)) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
   if (!dbAvailable) {
     return res.json({ success: true, persisted: false });
   }
 
   try {
-    const { username, clientId } = req.body;
-
-    if (!username || !clientId) {
-      return res.status(400).json({ error: 'Missing required fields' });
-    }
-
     await upsertUser(username, clientId);
     res.json({ success: true, persisted: true });
   } catch (error) {
