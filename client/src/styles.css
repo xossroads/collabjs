@@ -378,6 +378,11 @@ body {
   justify-content: flex-end;
 }
 
+#host-menu-modal .modal-buttons {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .modal-buttons button {
   padding: 8px 16px;
   border: none;
@@ -398,6 +403,25 @@ body {
 #host-login-submit {
   background: #0e639c;
   color: white;
+}
+
+#host-menu-logout,
+#host-menu-logout-all,
+#host-menu-close,
+#host-nuke-cancel,
+#host-logout-all-cancel,
+#host-logout-all-confirm {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+.modal-buttons button.danger {
+  background: #a1322c;
+  color: white;
+}
+
+.modal-buttons button.danger:hover {
+  background: #b53b34;
 }
 
 #host-btn {

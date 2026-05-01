@@ -38,6 +38,9 @@ export interface EditorConfig {
   onFocus: () => void;
   onBlur: () => void;
   onKeystroke: () => void;
+  // Optional: receive Hocuspocus stateless messages broadcast from the
+  // server. Used by the host flow for room-level events like "room-nuked".
+  onStateless?: (payload: string) => void;
 }
 
 export interface CollabEditor {
@@ -51,7 +54,7 @@ export interface CollabEditor {
 }
 
 export function createEditor(config: EditorConfig): CollabEditor {
-  const { container, roomId, username, wsUrl, initialTheme, onFocus, onBlur, onKeystroke } = config;
+  const { container, roomId, username, wsUrl, initialTheme, onFocus, onBlur, onKeystroke, onStateless } = config;
 
   // Theme compartment for dynamic theme switching
   const themeCompartment = new Compartment();
@@ -68,6 +71,9 @@ export function createEditor(config: EditorConfig): CollabEditor {
     name: roomId,
     document: ydoc,
     awareness: awareness,
+    onStateless: onStateless
+      ? ({ payload }) => onStateless(payload)
+      : undefined,
   });
 
   const ytext = ydoc.getText('codemirror');

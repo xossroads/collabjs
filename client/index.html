@@ -100,6 +100,40 @@
       </div>
     </div>
   </div>
+  <div id="host-menu-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>🎛️ Host actions</h2>
+      <p>You're the host of this room.</p>
+      <div class="modal-buttons">
+        <button id="host-menu-logout">Log out</button>
+        <button id="host-menu-logout-all">Log out everywhere…</button>
+        <button id="host-menu-nuke" class="danger">Nuke room…</button>
+        <button id="host-menu-close">Close</button>
+      </div>
+    </div>
+  </div>
+  <div id="host-logout-all-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Log out every host session?</h2>
+      <p>Revokes every active host session for this room, including this one. Anyone authenticated as the host on another device or tab will need to log in again. The room and its password are untouched.</p>
+      <div id="host-logout-all-error" class="modal-error hidden"></div>
+      <div class="modal-buttons">
+        <button id="host-logout-all-cancel">Cancel</button>
+        <button id="host-logout-all-confirm">Yes, log everyone out</button>
+      </div>
+    </div>
+  </div>
+  <div id="host-nuke-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>⚠️ Nuke this room?</h2>
+      <p>This permanently deletes the document, all activity logs, and the host record. Anyone currently in the room will be disconnected. This cannot be undone.</p>
+      <div id="host-nuke-error" class="modal-error hidden"></div>
+      <div class="modal-buttons">
+        <button id="host-nuke-cancel">Cancel</button>
+        <button id="host-nuke-confirm" class="danger">Yes, nuke it</button>
+      </div>
+    </div>
+  </div>
   <div id="about-modal" class="modal hidden">
     <div class="modal-content about-content">
       <h2>About CollabJS</h2>

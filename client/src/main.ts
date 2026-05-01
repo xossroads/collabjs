@@ -21,6 +21,9 @@ import {
   fetchHostStatus,
   claimHost,
   loginHost,
+  nukeRoom,
+  logoutAllHostSessions,
+  parseHostStatelessMessage,
   getStoredHostToken,
   storeHostToken,
   clearHostToken,
@@ -114,6 +117,11 @@ async function init() {
     : `${wsProtocol}//${window.location.host}/ws`;
 
   // Create collaborative editor
+  // Deferred ref for the host-state-changed handler. setupHostFlow assigns
+  // it once it has built its modal/button state machine. Any messages that
+  // arrive before then (vanishingly unlikely — page just loaded) are ignored.
+  const onHostStateChangedRef: { current: (() => void) | null } = { current: null };
+
   let editor: CollabEditor = createEditor({
     container: editorContainer,
     roomId,
@@ -123,6 +131,22 @@ async function init() {
     onFocus: () => {},
     onBlur: () => {},
     onKeystroke: () => activityTracker.recordKeystroke(),
+    onStateless: (payload) => {
+      const msg = parseHostStatelessMessage(payload);
+      if (!msg) return;
+      if (msg.type === 'room-nuked') {
+        // Server tells us this room is being deleted. Drop our local Y.Doc
+        // state by reloading — without this, CRDT auto-sync would push our
+        // pre-nuke content right back into the empty server doc on
+        // reconnect and visually un-do the nuke.
+        clearHostToken(roomId);
+        window.location.reload();
+      } else if (msg.type === 'host-state-changed') {
+        // Claim/login/logout-all happened somewhere. Re-fetch and reconcile
+        // UI live so other tabs don't keep showing stale state until reload.
+        onHostStateChangedRef.current?.();
+      }
+    },
   });
 
   // Theme change handler
@@ -278,7 +302,7 @@ async function init() {
   // - silently treat user as host (token already stored)
   // - prompt to claim (no host set yet)
   // - show the host login button (host set, not currently authed)
-  setupHostFlow(roomId);
+  setupHostFlow(roomId, onHostStateChangedRef);
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', () => {
@@ -293,7 +317,10 @@ async function init() {
 // Drive the host claim and login modals. Kept separate from init() so the
 // existing layout reads cleanly. The modals live in index.html; this just
 // wires their event handlers and decides which (if any) to show on load.
-async function setupHostFlow(roomId: string): Promise<void> {
+async function setupHostFlow(
+  roomId: string,
+  onHostStateChangedRef: { current: (() => void) | null }
+): Promise<void> {
   const hostBtn = document.getElementById('host-btn') as HTMLButtonElement;
   const claimModal = document.getElementById('host-claim-modal')!;
   const claimPwd = document.getElementById('host-claim-password') as HTMLInputElement;
@@ -307,6 +334,19 @@ async function setupHostFlow(roomId: string): Promise<void> {
   const loginMessage = document.getElementById('host-login-message')!;
   const loginSubmit = document.getElementById('host-login-submit')!;
   const loginCancel = document.getElementById('host-login-cancel')!;
+  const menuModal = document.getElementById('host-menu-modal')!;
+  const menuLogout = document.getElementById('host-menu-logout')!;
+  const menuLogoutAll = document.getElementById('host-menu-logout-all')!;
+  const menuNuke = document.getElementById('host-menu-nuke')!;
+  const menuClose = document.getElementById('host-menu-close')!;
+  const nukeModal = document.getElementById('host-nuke-modal')!;
+  const nukeError = document.getElementById('host-nuke-error')!;
+  const nukeCancel = document.getElementById('host-nuke-cancel')!;
+  const nukeConfirm = document.getElementById('host-nuke-confirm') as HTMLButtonElement;
+  const logoutAllModal = document.getElementById('host-logout-all-modal')!;
+  const logoutAllError = document.getElementById('host-logout-all-error')!;
+  const logoutAllCancel = document.getElementById('host-logout-all-cancel')!;
+  const logoutAllConfirm = document.getElementById('host-logout-all-confirm') as HTMLButtonElement;
 
   const showError = (el: HTMLElement, msg: string) => {
     el.textContent = msg;
@@ -337,8 +377,8 @@ async function setupHostFlow(roomId: string): Promise<void> {
   const closeLoginModal = () => loginModal.classList.add('hidden');
 
   // Two button states:
-  //   "🔒 Host"  (default class)  → click to open login modal
-  //   "👑 Host"  (.is-host)       → click to log out (clear stored token)
+  //   "🔒 Host"  (default class)  → click opens login modal
+  //   "🎛️ Host"  (.is-host)       → click opens host menu (log out, nuke, …)
   // hidden class wins over both: we hide entirely when the room has no
   // host yet (the claim modal is the affordance there).
   const setButtonState = (state: 'hidden' | 'login' | 'authed') => {
@@ -349,8 +389,8 @@ async function setupHostFlow(roomId: string): Promise<void> {
     }
     if (state === 'authed') {
       hostBtn.classList.add('is-host');
-      hostBtn.textContent = '👑 Host';
-      hostBtn.title = 'You are this room\'s host. Click to log out.';
+      hostBtn.textContent = '🎛️ Host';
+      hostBtn.title = 'Open host menu';
     } else {
       hostBtn.textContent = '🔒 Host';
       hostBtn.title = 'Host login';
@@ -362,15 +402,105 @@ async function setupHostFlow(roomId: string): Promise<void> {
     setButtonState('authed');
   };
 
+  const openMenuModal = () => menuModal.classList.remove('hidden');
+  const closeMenuModal = () => menuModal.classList.add('hidden');
+  const openNukeModal = () => {
+    clearError(nukeError);
+    nukeConfirm.disabled = false;
+    nukeConfirm.textContent = 'Yes, nuke it';
+    nukeModal.classList.remove('hidden');
+  };
+  const closeNukeModal = () => nukeModal.classList.add('hidden');
+
+  const openLogoutAllModal = () => {
+    clearError(logoutAllError);
+    logoutAllConfirm.disabled = false;
+    logoutAllConfirm.textContent = 'Yes, log everyone out';
+    logoutAllModal.classList.remove('hidden');
+  };
+  const closeLogoutAllModal = () => logoutAllModal.classList.add('hidden');
+
   const handleHostButtonClick = () => {
     if (getStoredHostToken(roomId)) {
-      // Authed state: clicking logs out. Remove the token; the button drops
-      // back to "🔒 Host" so they can re-authenticate later if they want.
+      openMenuModal();
+    } else {
+      openLoginModal();
+    }
+  };
+
+  const handleLogoutFromMenu = () => {
+    clearHostToken(roomId);
+    setButtonState('login');
+    closeMenuModal();
+  };
+
+  const handleLogoutAllConfirm = async () => {
+    const token = getStoredHostToken(roomId);
+    if (!token) {
+      showError(logoutAllError, 'You are no longer logged in. Reload and try again.');
+      return;
+    }
+    clearError(logoutAllError);
+    logoutAllConfirm.disabled = true;
+    logoutAllConfirm.textContent = 'Logging out…';
+
+    const result = await logoutAllHostSessions(roomId, token);
+    if (result.ok) {
+      // Our own session was wiped along with the others. Drop the local
+      // token and put the button back to login state without reloading —
+      // user gets immediate feedback that they're logged out.
+      clearHostToken(roomId);
+      setButtonState('login');
+      closeLogoutAllModal();
+      return;
+    }
+    logoutAllConfirm.disabled = false;
+    logoutAllConfirm.textContent = 'Yes, log everyone out';
+    if (result.reason === 'unauthorized' || result.reason === 'forbidden') {
+      showError(logoutAllError, 'Your host session is no longer valid. Log in again.');
       clearHostToken(roomId);
       setButtonState('login');
       return;
     }
-    openLoginModal();
+    if (result.reason === 'unavailable') {
+      showError(logoutAllError, 'Host feature is currently unavailable.');
+      return;
+    }
+    showError(logoutAllError, 'Could not revoke sessions. Try again.');
+  };
+
+  const handleNukeConfirm = async () => {
+    const token = getStoredHostToken(roomId);
+    if (!token) {
+      showError(nukeError, 'You are no longer logged in. Reload and try again.');
+      return;
+    }
+    clearError(nukeError);
+    nukeConfirm.disabled = true;
+    nukeConfirm.textContent = 'Nuking…';
+
+    const result = await nukeRoom(roomId, token);
+    if (result.ok) {
+      // Room is gone; our token is dead with it. Clear local state and
+      // reload — the page comes back as a fresh empty room and the user
+      // is offered the chance to claim it again.
+      clearHostToken(roomId);
+      window.location.reload();
+      return;
+    }
+    nukeConfirm.disabled = false;
+    nukeConfirm.textContent = 'Yes, nuke it';
+    if (result.reason === 'unauthorized' || result.reason === 'forbidden') {
+      showError(nukeError, 'Your host session is no longer valid. Log in again.');
+      clearHostToken(roomId);
+      setButtonState('login');
+      return;
+    }
+    if (result.reason === 'unavailable') {
+      showError(nukeError, 'Host feature is currently unavailable.');
+      return;
+    }
+    showError(nukeError, 'Could not delete the room. Try again.');
   };
 
   // Submit the claim. On 409 race, swap to login mode.
@@ -462,22 +592,113 @@ async function setupHostFlow(roomId: string): Promise<void> {
     if (e.target === loginModal) closeLoginModal();
   });
 
+  menuLogout.addEventListener('click', handleLogoutFromMenu);
+  menuLogoutAll.addEventListener('click', () => {
+    closeMenuModal();
+    openLogoutAllModal();
+  });
+  menuNuke.addEventListener('click', () => {
+    closeMenuModal();
+    openNukeModal();
+  });
+  menuClose.addEventListener('click', closeMenuModal);
+  menuModal.addEventListener('click', (e) => {
+    if (e.target === menuModal) closeMenuModal();
+  });
+
+  logoutAllCancel.addEventListener('click', closeLogoutAllModal);
+  logoutAllConfirm.addEventListener('click', handleLogoutAllConfirm);
+  logoutAllModal.addEventListener('click', (e) => {
+    if (e.target === logoutAllModal && !logoutAllConfirm.disabled) closeLogoutAllModal();
+  });
+
+  nukeCancel.addEventListener('click', closeNukeModal);
+  nukeConfirm.addEventListener('click', handleNukeConfirm);
+  nukeModal.addEventListener('click', (e) => {
+    if (e.target === nukeModal && !nukeConfirm.disabled) closeNukeModal();
+  });
+
   hostBtn.addEventListener('click', handleHostButtonClick);
 
-  // Decide initial state. The button is shown whenever the room has a host
-  // (in either authed or login state); hidden when no host is set yet (the
-  // claim modal is the affordance there) or when the DB is down.
-  const status = await fetchHostStatus(roomId);
-  if (!status.available) {
-    setButtonState('hidden');
-    return;
-  }
-  if (!status.claimed) {
-    setButtonState('hidden');
-    openClaimModal();
-    return;
-  }
-  setButtonState(getStoredHostToken(roomId) ? 'authed' : 'login');
+  const isOpen = (modal: HTMLElement) => !modal.classList.contains('hidden');
+
+  // Reconcile our local state with the server's view of the world. Called
+  // on page load and whenever the server pushes a host-state-changed
+  // stateless message (claim/login/logout-all elsewhere).
+  //
+  // - Drops localStorage tokens the server says are no longer valid.
+  // - Updates the host button state to match.
+  // - Closes any open host-only modals (menu/nuke/logout-all) when we lose
+  //   auth, since they'd reference dead actions.
+  // - Closes the claim modal when the room gets claimed by someone else,
+  //   and swaps it for the login modal so the user can still authenticate
+  //   if they know the new password.
+  // - Closes the login modal if the room becomes unclaimed mid-flight.
+  const refreshHostState = async (isInitialLoad = false): Promise<void> => {
+    const storedToken = getStoredHostToken(roomId);
+    const status = await fetchHostStatus(roomId, storedToken);
+
+    // If the stored token changed while the fetch was in flight, our result
+    // is stale — bail. The race that motivates this: on the tab that just
+    // claimed/logged in, the server's host-state-changed broadcast can
+    // arrive before the claim/login HTTP response. We start a refresh with
+    // a null token, then the response stores the real token and sets
+    // 'authed'; without this guard, the late-arriving authed:false result
+    // would overwrite the correct state and leave the button stuck at 🔒.
+    if (getStoredHostToken(roomId) !== storedToken) return;
+
+    if (!status.available) {
+      setButtonState('hidden');
+      return;
+    }
+
+    if (!status.claimed) {
+      setButtonState('hidden');
+      // Auto-open the claim modal only on the very first load — we don't
+      // want to silently spring it on someone if the room just got nuked
+      // out from under them by another tab.
+      if (isInitialLoad) {
+        openClaimModal();
+      }
+      if (isOpen(loginModal)) closeLoginModal();
+      if (isOpen(menuModal)) closeMenuModal();
+      if (isOpen(nukeModal) && !nukeConfirm.disabled) closeNukeModal();
+      if (isOpen(logoutAllModal) && !logoutAllConfirm.disabled) closeLogoutAllModal();
+      return;
+    }
+
+    // Room is claimed.
+    if (storedToken && !status.authed) {
+      clearHostToken(roomId);
+    }
+    setButtonState(status.authed ? 'authed' : 'login');
+
+    // If the claim modal was open and someone else just claimed, close it
+    // and switch to login so they can authenticate if they know the password.
+    if (isOpen(claimModal)) {
+      closeClaimModal();
+      if (!isInitialLoad) {
+        openLoginModal(
+          'Someone else just claimed this room. You can log in if you know the password.'
+        );
+      }
+    }
+
+    if (!status.authed) {
+      // Lost auth — close menus/confirms that depend on it. Don't close
+      // mid-network-call dialogs; let them surface the 401 themselves.
+      if (isOpen(menuModal)) closeMenuModal();
+      if (isOpen(nukeModal) && !nukeConfirm.disabled) closeNukeModal();
+      if (isOpen(logoutAllModal) && !logoutAllConfirm.disabled) closeLogoutAllModal();
+    }
+  };
+
+  // Wire the deferred ref so the editor's onStateless can drive us.
+  onHostStateChangedRef.current = () => {
+    refreshHostState().catch(console.error);
+  };
+
+  await refreshHostState(true);
 }
 
 // Start the app

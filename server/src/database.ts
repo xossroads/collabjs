@@ -106,11 +106,42 @@ export async function getHostSession(
   return result.rows[0] || null;
 }
 
+// Wipe every session for a room. Used to enforce single-host-session-at-a-time
+// (called before issuing a new session on claim/login) and to power the
+// "Log out everywhere" host action. Returns the number of sessions revoked.
+export async function revokeAllHostSessions(roomId: string): Promise<number> {
+  const result = await pool.query(
+    'DELETE FROM host_sessions WHERE room_id = $1',
+    [roomId]
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function purgeExpiredHostSessions(): Promise<number> {
   const result = await pool.query(
     'DELETE FROM host_sessions WHERE expires_at < NOW()'
   );
   return result.rowCount ?? 0;
+}
+
+// Wipe everything for a single room: document state, activity logs, host
+// record (cascade-deletes its sessions). Run inside a single transaction
+// so a failure mid-way doesn't leave a half-deleted room behind.
+export async function deleteRoom(roomId: string): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query('DELETE FROM activity_logs WHERE room_id = $1', [roomId]);
+    await client.query('DELETE FROM documents WHERE room_id = $1', [roomId]);
+    // host_sessions cascade-deletes via the FK on room_hosts.
+    await client.query('DELETE FROM room_hosts WHERE room_id = $1', [roomId]);
+    await client.query('COMMIT');
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 // --- TTL purges ---------------------------------------------------------
