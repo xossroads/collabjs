@@ -39,6 +39,7 @@
         <select id="theme-select"></select>
       </div>
       <div id="connected-users"></div>
+      <button id="host-btn" class="hidden" title="Host login">🔒 Host</button>
       <button id="run-btn">Run</button>
     </header>
     <div id="main-container">
@@ -71,6 +72,31 @@
       <div class="modal-buttons">
         <button id="random-name-btn">Random Name</button>
         <button id="save-name-btn">Save</button>
+      </div>
+    </div>
+  </div>
+  <div id="host-claim-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Become this room's host?</h2>
+      <p>You're the first one here. Set a password to take host control of this room. Anyone else joining can use the room normally — only you'll be able to take host actions.</p>
+      <input type="password" id="host-claim-password" placeholder="Password (min 8 characters)" maxlength="72" autocomplete="new-password">
+      <input type="password" id="host-claim-confirm" placeholder="Confirm password" maxlength="72" autocomplete="new-password">
+      <div id="host-claim-error" class="modal-error hidden"></div>
+      <div class="modal-buttons">
+        <button id="host-claim-skip">Skip</button>
+        <button id="host-claim-submit">Set password</button>
+      </div>
+    </div>
+  </div>
+  <div id="host-login-modal" class="modal hidden">
+    <div class="modal-content">
+      <h2>Host login</h2>
+      <p id="host-login-message">Enter the host password for this room.</p>
+      <input type="password" id="host-login-password" placeholder="Password" maxlength="72" autocomplete="current-password">
+      <div id="host-login-error" class="modal-error hidden"></div>
+      <div class="modal-buttons">
+        <button id="host-login-cancel">Cancel</button>
+        <button id="host-login-submit">Log in</button>
       </div>
     </div>
   </div>

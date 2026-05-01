@@ -348,6 +348,7 @@ body {
   border-radius: 8px;
   border: 1px solid #3c3c3c;
   min-width: 300px;
+  max-width: 420px;
 }
 
 .modal-content h2 {
@@ -385,14 +386,61 @@ body {
   font-size: 14px;
 }
 
-#random-name-btn {
+#random-name-btn,
+#host-claim-skip,
+#host-login-cancel {
   background: #3c3c3c;
   color: #d4d4d4;
 }
 
-#save-name-btn {
+#save-name-btn,
+#host-claim-submit,
+#host-login-submit {
   background: #0e639c;
   color: white;
+}
+
+#host-btn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  color: #d4d4d4;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+#host-btn:hover {
+  background: #3c3c3c;
+}
+
+/* Authed-as-host state: subtle gold accent so it's visually distinct from
+   the "log in" state without being garish. */
+#host-btn.is-host {
+  border-color: #c9a227;
+  color: #f5d76e;
+}
+
+#host-btn.hidden {
+  display: none;
+}
+
+.modal-content p {
+  font-size: 13px;
+  color: #a0a0a0;
+  line-height: 1.4;
+  margin-bottom: 16px;
+}
+
+.modal-error {
+  font-size: 13px;
+  color: #f48771;
+  margin-bottom: 12px;
+  min-height: 1em;
+}
+
+.modal-error.hidden {
+  display: none;
 }
 
 .modal-buttons button:hover {
