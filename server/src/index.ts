@@ -5,9 +5,19 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
+import {
+  getDocument,
+  saveDocument,
+  logActivity,
+  upsertUser,
+  testConnection,
+  getRoomHost,
+  tryClaimRoomHost,
+  createHostSession,
+} from './database.js';
 import { startCleanupJob } from './cleanup.js';
 import { getClientIp, requestLogger, sanitizeForLog } from './logging.js';
+import { hashPassword, verifyPassword, generateToken } from './password.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -283,6 +293,127 @@ app.get('/api/health', (req, res) => {
     database: dbAvailable,
     environment: NODE_ENV,
   });
+});
+
+// --- Per-room host -----------------------------------------------------
+//
+// One host per room, set by whoever claims it first with a password. After
+// claim, accessing the host role on this room requires the password.
+
+const PASSWORD_MIN_LEN = 8;
+// scrypt's standard limit for the password buffer is generous, but we cap at
+// 72 to match common bcrypt-era expectations and to bound abuse.
+const PASSWORD_MAX_LEN = 72;
+const HOST_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Precomputed dummy hash for the host-login path. When a room has no host
+// yet, we still want to spend the same time the verify path would, so an
+// attacker can't tell "no host yet" from "host set, wrong password" by
+// timing. Computed once at startup.
+const DUMMY_HASH_PROMISE = hashPassword('!unclaimed-room-placeholder!');
+
+function isValidRoomIdParam(v: string | undefined): v is string {
+  return typeof v === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(v);
+}
+
+function isValidPassword(v: unknown): v is string {
+  return (
+    typeof v === 'string' &&
+    v.length >= PASSWORD_MIN_LEN &&
+    v.length <= PASSWORD_MAX_LEN
+  );
+}
+
+// GET host status — public. Returns whether the room has been claimed.
+// We deliberately don't expose anything about the password, claim time, or
+// whether the caller is currently authenticated; that's all behind the
+// host-login flow.
+app.get('/api/rooms/:id/host', async (req, res) => {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  if (!dbAvailable) {
+    // No DB means no host records anywhere; treat the feature as off.
+    return res.json({ claimed: false, available: false });
+  }
+  try {
+    const row = await getRoomHost(roomId);
+    res.json({ claimed: !!row, available: true });
+  } catch (error) {
+    console.error('host status lookup failed:', error);
+    res.status(500).json({ error: 'Lookup failed' });
+  }
+});
+
+// Claim host for a room. Atomic: only the first concurrent caller wins.
+app.post('/api/rooms/:id/claim', async (req, res) => {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  const { password } = req.body ?? {};
+  if (!isValidPassword(password)) {
+    return res.status(400).json({
+      error: `Password must be ${PASSWORD_MIN_LEN}-${PASSWORD_MAX_LEN} characters`,
+    });
+  }
+  if (!dbAvailable) {
+    return res.status(503).json({ error: 'Host feature unavailable' });
+  }
+
+  try {
+    const passwordHash = await hashPassword(password);
+    const won = await tryClaimRoomHost(roomId, passwordHash);
+    if (!won) {
+      return res.status(409).json({ error: 'Room already has a host' });
+    }
+
+    const { plaintext, hash } = generateToken();
+    const expiresAt = new Date(Date.now() + HOST_SESSION_TTL_MS);
+    await createHostSession(hash, roomId, expiresAt);
+
+    res.status(201).json({ token: plaintext, expiresAt: expiresAt.toISOString() });
+  } catch (error) {
+    console.error('host claim failed:', error);
+    res.status(500).json({ error: 'Claim failed' });
+  }
+});
+
+// Authenticate as the room's existing host.
+app.post('/api/rooms/:id/host-login', async (req, res) => {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  const { password } = req.body ?? {};
+  if (typeof password !== 'string') {
+    return res.status(400).json({ error: 'Password required' });
+  }
+  if (!dbAvailable) {
+    return res.status(503).json({ error: 'Host feature unavailable' });
+  }
+
+  try {
+    const row = await getRoomHost(roomId);
+    // Always run exactly one verify so timing doesn't leak whether the room
+    // has been claimed. The dummy hash is precomputed so we don't pay extra
+    // scrypt time on the unclaimed branch.
+    const encodedToCompare = row ? row.password_hash : await DUMMY_HASH_PROMISE;
+    const ok = await verifyPassword(password, encodedToCompare);
+    if (!row || !ok) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    const { plaintext, hash } = generateToken();
+    const expiresAt = new Date(Date.now() + HOST_SESSION_TTL_MS);
+    await createHostSession(hash, roomId, expiresAt);
+
+    res.json({ token: plaintext, expiresAt: expiresAt.toISOString() });
+  } catch (error) {
+    console.error('host login failed:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
 });
 
 // Serve index.html for all other routes (SPA fallback) in production

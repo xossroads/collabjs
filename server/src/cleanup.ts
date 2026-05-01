@@ -2,6 +2,7 @@ import {
   purgeStaleDocuments,
   purgeOldActivityLogs,
   purgeStaleUsers,
+  purgeExpiredHostSessions,
 } from './database.js';
 
 interface CleanupConfig {
@@ -52,6 +53,9 @@ async function runOnce(config: CleanupConfig): Promise<void> {
       () => purgeStaleUsers(config.userTtlDays),
     ]);
   }
+  // Always purge expired host sessions — the expiration is per-row, not
+  // configurable here, so there's no TTL knob to gate this on.
+  tasks.push(['expired host sessions', () => purgeExpiredHostSessions()]);
 
   for (const [label, fn] of tasks) {
     try {

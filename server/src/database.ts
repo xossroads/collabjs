@@ -54,6 +54,67 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
+// --- Per-room host -----------------------------------------------------
+
+export async function getRoomHost(
+  roomId: string
+): Promise<{ password_hash: string } | null> {
+  const result = await pool.query(
+    'SELECT password_hash FROM room_hosts WHERE room_id = $1',
+    [roomId]
+  );
+  return result.rows[0] || null;
+}
+
+// Insert a new host row only if no row exists for this room. Returns true
+// if the insert won the race, false if someone else already claimed.
+export async function tryClaimRoomHost(
+  roomId: string,
+  passwordHash: string
+): Promise<boolean> {
+  const result = await pool.query(
+    `INSERT INTO room_hosts (room_id, password_hash)
+     VALUES ($1, $2)
+     ON CONFLICT (room_id) DO NOTHING`,
+    [roomId, passwordHash]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+export async function createHostSession(
+  tokenHash: string,
+  roomId: string,
+  expiresAt: Date
+): Promise<void> {
+  await pool.query(
+    `INSERT INTO host_sessions (token_hash, room_id, expires_at)
+     VALUES ($1, $2, $3)`,
+    [tokenHash, roomId, expiresAt]
+  );
+}
+
+export async function getHostSession(
+  tokenHash: string
+): Promise<{ room_id: string; expires_at: Date } | null> {
+  const result = await pool.query(
+    `SELECT room_id, expires_at
+       FROM host_sessions
+      WHERE token_hash = $1
+        AND expires_at > NOW()`,
+    [tokenHash]
+  );
+  return result.rows[0] || null;
+}
+
+export async function purgeExpiredHostSessions(): Promise<number> {
+  const result = await pool.query(
+    'DELETE FROM host_sessions WHERE expires_at < NOW()'
+  );
+  return result.rowCount ?? 0;
+}
+
+// --- TTL purges ---------------------------------------------------------
+
 // TTL purges. Each takes the maximum age in days and returns the number of
 // rows deleted, so the caller can log it. Postgres's INTERVAL accepts an
 // integer cast at the parameter site to avoid SQL injection.

@@ -36,3 +36,25 @@ CREATE INDEX IF NOT EXISTS idx_activity_time ON activity_logs(recorded_at);
 -- scan the whole table.
 CREATE INDEX IF NOT EXISTS idx_documents_updated ON documents(updated_at);
 CREATE INDEX IF NOT EXISTS idx_users_last_seen ON users(last_seen);
+
+-- Per-room host: at most one host per room, set the first time someone
+-- claims it. Password hash uses scrypt with a per-row salt; format
+-- "scrypt:<salt-hex>:<hash-hex>" so the algorithm is part of the stored
+-- value (lets us migrate later without ambiguity).
+CREATE TABLE IF NOT EXISTS room_hosts (
+  room_id VARCHAR(255) PRIMARY KEY,
+  password_hash TEXT NOT NULL,
+  claimed_at TIMESTAMP DEFAULT NOW()
+);
+
+-- Host session tokens. We store the SHA-256 of the token so a DB leak does
+-- not hand out live host sessions. Cascade delete with the room_host row
+-- so revoking host nukes all outstanding sessions.
+CREATE TABLE IF NOT EXISTS host_sessions (
+  token_hash TEXT PRIMARY KEY,
+  room_id VARCHAR(255) NOT NULL REFERENCES room_hosts(room_id) ON DELETE CASCADE,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_host_sessions_room ON host_sessions(room_id);
+CREATE INDEX IF NOT EXISTS idx_host_sessions_expires ON host_sessions(expires_at);
