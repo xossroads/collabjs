@@ -407,7 +407,7 @@ async function setupHostFlow(
   const openNukeModal = () => {
     clearError(nukeError);
     nukeConfirm.disabled = false;
-    nukeConfirm.textContent = 'Yes, nuke it';
+    nukeConfirm.textContent = 'Destroy it!';
     nukeModal.classList.remove('hidden');
   };
   const closeNukeModal = () => nukeModal.classList.add('hidden');
@@ -477,7 +477,7 @@ async function setupHostFlow(
     }
     clearError(nukeError);
     nukeConfirm.disabled = true;
-    nukeConfirm.textContent = 'Nuking…';
+    nukeConfirm.textContent = 'Destroying…';
 
     const result = await nukeRoom(roomId, token);
     if (result.ok) {
@@ -489,7 +489,7 @@ async function setupHostFlow(
       return;
     }
     nukeConfirm.disabled = false;
-    nukeConfirm.textContent = 'Yes, nuke it';
+    nukeConfirm.textContent = 'Destroy it!';
     if (result.reason === 'unauthorized' || result.reason === 'forbidden') {
       showError(nukeError, 'Your host session is no longer valid. Log in again.');
       clearHostToken(roomId);
