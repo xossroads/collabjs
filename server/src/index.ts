@@ -5,6 +5,7 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { randomUUID } from 'crypto';
 import type { Request, Response, NextFunction } from 'express';
 import {
   getDocument,
@@ -546,13 +547,22 @@ app.post('/api/rooms/:id/host/logout-all', requireHost, async (req: HostRequest,
 // nuke would visually un-do itself.
 app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
   const roomId = req.hostRoomId!;
+  // Server picks the successor room ID so every connected tab — destroyer
+  // included — can be told the same destination, keeping the group together
+  // in a fresh room. Both delivery paths (broadcast + HTTP response) carry
+  // the same value, so the destroyer can navigate even if it misses its
+  // own broadcast.
+  const nextRoomId = randomUUID();
   roomsBeingNuked.add(roomId);
   try {
-    // 1. Tell every connected client to reload — they'll come back with a
-    //    fresh Y.Doc and won't repopulate the server-side state.
+    // 1. Tell every connected client where to go next. They'll redirect,
+    //    dropping their local Y.Doc, so the deleted server-side state
+    //    can't be re-populated by their reconnect.
     const doc = hocuspocus.documents.get(roomId);
     if (doc) {
-      doc.broadcastStateless(JSON.stringify({ type: 'room-nuked' }));
+      doc.broadcastStateless(
+        JSON.stringify({ type: 'room-nuked', nextRoomId })
+      );
       // Give the WS buffer a moment to flush before we slam connections shut.
       await new Promise((r) => setTimeout(r, 100));
     }
@@ -566,8 +576,10 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
     // 3. Wipe DB rows transactionally.
     await deleteRoom(roomId);
 
-    console.log(`HOST nuke room=${sanitizeForLog(roomId)}`);
-    res.status(204).end();
+    console.log(
+      `HOST nuke room=${sanitizeForLog(roomId)} next=${sanitizeForLog(nextRoomId)}`
+    );
+    res.status(200).json({ nextRoomId });
   } catch (error) {
     console.error('nuke failed:', error);
     res.status(500).json({ error: 'Nuke failed' });

@@ -107,11 +107,23 @@ export async function loginHost(roomId: string, password: string): Promise<Login
   return { ok: false, reason: 'network' };
 }
 
-export type NukeResult =
-  | { ok: true }
-  | { ok: false; reason: 'unauthorized' | 'forbidden' | 'unavailable' | 'network' | 'server' };
+// Failure shape is shared between logout-all and nuke (both go through
+// requireHost); only the success shapes differ.
+type HostActionFailure = {
+  ok: false;
+  reason: 'unauthorized' | 'forbidden' | 'unavailable' | 'network' | 'server';
+};
 
-export async function logoutAllHostSessions(roomId: string, token: string): Promise<NukeResult> {
+export type LogoutAllResult = { ok: true } | HostActionFailure;
+export type NukeResult = { ok: true; nextRoomId: string } | HostActionFailure;
+
+// Mirror of the server-side room-id regex. Used at every parse boundary that
+// hands an untrusted string to navigation so a buggy or hostile server (or a
+// stateless message tampered with elsewhere) can't redirect us somewhere
+// unexpected.
+const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,128}$/;
+
+export async function logoutAllHostSessions(roomId: string, token: string): Promise<LogoutAllResult> {
   let res: Response;
   try {
     res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/host/logout-all`, {
@@ -129,17 +141,26 @@ export async function logoutAllHostSessions(roomId: string, token: string): Prom
 }
 
 // Payload shapes of stateless messages the server broadcasts for host events.
-//   room-nuked        — room is being deleted; reload to drop local Y.Doc.
+//   room-nuked        — room is being deleted; navigate to /room/<nextRoomId>
+//                       so every tab lands together in a fresh room and the
+//                       local Y.Doc is dropped (CRDT auto-sync would otherwise
+//                       push pre-nuke content into the empty server doc).
 //   host-state-changed — claim/login/logout-all happened; refetch host status
 //                        and update the UI without reloading.
 export type HostStatelessMessage =
-  | { type: 'room-nuked' }
+  | { type: 'room-nuked'; nextRoomId: string }
   | { type: 'host-state-changed' };
 
 export function parseHostStatelessMessage(payload: string): HostStatelessMessage | null {
   try {
     const parsed = JSON.parse(payload);
-    if (parsed?.type === 'room-nuked') return { type: 'room-nuked' };
+    if (parsed?.type === 'room-nuked') {
+      const nextRoomId = parsed?.nextRoomId;
+      if (typeof nextRoomId === 'string' && ROOM_ID_RE.test(nextRoomId)) {
+        return { type: 'room-nuked', nextRoomId };
+      }
+      return null;
+    }
     if (parsed?.type === 'host-state-changed') return { type: 'host-state-changed' };
     return null;
   } catch {
@@ -158,7 +179,18 @@ export async function nukeRoom(roomId: string, token: string): Promise<NukeResul
     return { ok: false, reason: 'network' };
   }
 
-  if (res.status === 204) return { ok: true };
+  if (res.status === 200) {
+    try {
+      const body = await res.json();
+      const nextRoomId = body?.nextRoomId;
+      if (typeof nextRoomId === 'string' && ROOM_ID_RE.test(nextRoomId)) {
+        return { ok: true, nextRoomId };
+      }
+    } catch {
+      // fall through to server error
+    }
+    return { ok: false, reason: 'server' };
+  }
   if (res.status === 401) return { ok: false, reason: 'unauthorized' };
   if (res.status === 403) return { ok: false, reason: 'forbidden' };
   if (res.status === 503) return { ok: false, reason: 'unavailable' };

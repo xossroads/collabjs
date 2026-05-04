@@ -10,7 +10,9 @@ import {
 } from './username';
 import {
   setupAwarenessListener,
+  getConnectedUsers,
 } from './awareness';
+import type { Awareness } from 'y-protocols/awareness';
 import {
   THEMES,
   getThemeById,
@@ -135,12 +137,13 @@ async function init() {
       const msg = parseHostStatelessMessage(payload);
       if (!msg) return;
       if (msg.type === 'room-nuked') {
-        // Server tells us this room is being deleted. Drop our local Y.Doc
-        // state by reloading — without this, CRDT auto-sync would push our
-        // pre-nuke content right back into the empty server doc on
-        // reconnect and visually un-do the nuke.
+        // Server tells us this room is being deleted and where to go next.
+        // Navigating (rather than reloading) drops our local Y.Doc and lands
+        // every connected tab in the same fresh room, so the group stays
+        // together. Reloading would have left CRDT auto-sync to push our
+        // pre-nuke content back into the empty server doc.
         clearHostToken(roomId);
-        window.location.reload();
+        window.location.replace(`/room/${msg.nextRoomId}`);
       } else if (msg.type === 'host-state-changed') {
         // Claim/login/logout-all happened somewhere. Re-fetch and reconcile
         // UI live so other tabs don't keep showing stale state until reload.
@@ -302,7 +305,7 @@ async function init() {
   // - silently treat user as host (token already stored)
   // - prompt to claim (no host set yet)
   // - show the host login button (host set, not currently authed)
-  setupHostFlow(roomId, onHostStateChangedRef);
+  setupHostFlow(roomId, onHostStateChangedRef, editor.awareness);
 
   // Cleanup on page unload
   window.addEventListener('beforeunload', () => {
@@ -319,7 +322,8 @@ async function init() {
 // wires their event handlers and decides which (if any) to show on load.
 async function setupHostFlow(
   roomId: string,
-  onHostStateChangedRef: { current: (() => void) | null }
+  onHostStateChangedRef: { current: (() => void) | null },
+  awareness: Awareness
 ): Promise<void> {
   const hostBtn = document.getElementById('host-btn') as HTMLButtonElement;
   const claimModal = document.getElementById('host-claim-modal')!;
@@ -347,6 +351,8 @@ async function setupHostFlow(
   const logoutAllError = document.getElementById('host-logout-all-error')!;
   const logoutAllCancel = document.getElementById('host-logout-all-cancel')!;
   const logoutAllConfirm = document.getElementById('host-logout-all-confirm') as HTMLButtonElement;
+  const dashboardUsers = document.getElementById('host-dashboard-users')!;
+  const dashboardDetail = document.getElementById('host-dashboard-detail')!;
 
   const showError = (el: HTMLElement, msg: string) => {
     el.textContent = msg;
@@ -402,8 +408,108 @@ async function setupHostFlow(
     setButtonState('authed');
   };
 
-  const openMenuModal = () => menuModal.classList.remove('hidden');
-  const closeMenuModal = () => menuModal.classList.add('hidden');
+  // Dashboard state. selectedClientId is the awareness clientID of the user
+  // whose details are showing in the right pane. Cleared when the user
+  // disconnects, when the modal closes, or when the host loses auth.
+  let selectedClientId: number | null = null;
+  let dashboardUnsubscribe: (() => void) | null = null;
+
+  const renderDashboardDetail = () => {
+    dashboardDetail.innerHTML = '';
+    if (selectedClientId === null) {
+      const empty = document.createElement('p');
+      empty.className = 'dashboard-detail-empty';
+      empty.textContent = 'Select a user to see details.';
+      dashboardDetail.appendChild(empty);
+      return;
+    }
+    const user = getConnectedUsers(awareness).get(selectedClientId);
+    if (!user) {
+      // Selected user disconnected; fall back to empty state.
+      selectedClientId = null;
+      renderDashboardDetail();
+      return;
+    }
+    const heading = document.createElement('h3');
+    const dot = document.createElement('span');
+    dot.className = 'user-dot';
+    dot.style.backgroundColor = user.color;
+    const name = document.createElement('span');
+    name.textContent = user.name;
+    heading.appendChild(dot);
+    heading.appendChild(name);
+    dashboardDetail.appendChild(heading);
+
+    const placeholder = document.createElement('p');
+    placeholder.className = 'dashboard-detail-placeholder';
+    placeholder.textContent =
+      'Per-user stats and contributions land in the next slice.';
+    dashboardDetail.appendChild(placeholder);
+  };
+
+  const renderDashboardUsers = () => {
+    const users = getConnectedUsers(awareness);
+    dashboardUsers.innerHTML = '';
+
+    // If the selected user dropped, clear before rendering so the detail
+    // pane and selected-row state stay consistent.
+    if (selectedClientId !== null && !users.has(selectedClientId)) {
+      selectedClientId = null;
+    }
+
+    if (users.size === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'empty-state';
+      empty.textContent = 'No other users connected.';
+      dashboardUsers.appendChild(empty);
+      renderDashboardDetail();
+      return;
+    }
+
+    users.forEach((user, clientId) => {
+      const li = document.createElement('li');
+      if (clientId === selectedClientId) li.classList.add('selected');
+
+      const dot = document.createElement('span');
+      dot.className = 'user-dot';
+      dot.style.backgroundColor = user.color;
+
+      const nameEl = document.createElement('span');
+      nameEl.className = 'user-name';
+      nameEl.textContent = user.name;
+
+      li.appendChild(dot);
+      li.appendChild(nameEl);
+      li.addEventListener('click', () => {
+        selectedClientId = clientId;
+        renderDashboardUsers();
+        renderDashboardDetail();
+      });
+      dashboardUsers.appendChild(li);
+    });
+
+    renderDashboardDetail();
+  };
+
+  const openMenuModal = () => {
+    selectedClientId = null;
+    renderDashboardUsers();
+    if (!dashboardUnsubscribe) {
+      // Only re-render the list while the modal is open. Listener is torn
+      // down on close to avoid touching detached DOM nodes.
+      const update = () => renderDashboardUsers();
+      awareness.on('change', update);
+      dashboardUnsubscribe = () => awareness.off('change', update);
+    }
+    menuModal.classList.remove('hidden');
+  };
+  const closeMenuModal = () => {
+    menuModal.classList.add('hidden');
+    if (dashboardUnsubscribe) {
+      dashboardUnsubscribe();
+      dashboardUnsubscribe = null;
+    }
+  };
   const openNukeModal = () => {
     clearError(nukeError);
     nukeConfirm.disabled = false;
@@ -481,11 +587,11 @@ async function setupHostFlow(
 
     const result = await nukeRoom(roomId, token);
     if (result.ok) {
-      // Room is gone; our token is dead with it. Clear local state and
-      // reload — the page comes back as a fresh empty room and the user
-      // is offered the chance to claim it again.
+      // Room is gone; our token is dead with it. Navigate to the new room
+      // the server picked — every other tab gets the same destination via
+      // the room-nuked broadcast, so the group lands together.
       clearHostToken(roomId);
-      window.location.reload();
+      window.location.replace(`/room/${result.nextRoomId}`);
       return;
     }
     nukeConfirm.disabled = false;

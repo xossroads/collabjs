@@ -101,14 +101,24 @@
     </div>
   </div>
   <div id="host-menu-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>🎛️ Host actions</h2>
-      <p>You're the host of this room.</p>
-      <div class="modal-buttons">
-        <button id="host-menu-logout">Log out</button>
-        <button id="host-menu-logout-all">Log out everywhere…</button>
-        <button id="host-menu-nuke" class="danger">Destroy room…</button>
-        <button id="host-menu-close">Close</button>
+    <div class="modal-content dashboard">
+      <div class="dashboard-layout">
+        <aside class="dashboard-sidebar">
+          <h2>🎛️ Host dashboard</h2>
+          <div class="dashboard-section">
+            <h3>In this room</h3>
+            <ul id="host-dashboard-users" class="dashboard-user-list"></ul>
+          </div>
+          <div class="modal-buttons dashboard-actions">
+            <button id="host-menu-logout">Log out</button>
+            <button id="host-menu-logout-all">Log out everywhere…</button>
+            <button id="host-menu-nuke" class="danger">Destroy room…</button>
+            <button id="host-menu-close">Close</button>
+          </div>
+        </aside>
+        <section class="dashboard-detail" id="host-dashboard-detail">
+          <p class="dashboard-detail-empty">Select a user to see details.</p>
+        </section>
       </div>
     </div>
   </div>
@@ -126,7 +136,7 @@
   <div id="host-nuke-modal" class="modal hidden">
     <div class="modal-content">
       <h2>⚠️ Destroy this room?</h2>
-      <p>This permanently deletes the document, all activity logs, and the host record. Anyone currently in the room will be disconnected. This cannot be undone.</p>
+      <p>This permanently deletes the document, all activity logs, and the host record. Everyone currently in the room, including you, will be moved together to a new empty room with a fresh URL. The old room link will no longer work. This cannot be undone.</p>
       <div id="host-nuke-error" class="modal-error hidden"></div>
       <div class="modal-buttons">
         <button id="host-nuke-cancel">Cancel</button>
