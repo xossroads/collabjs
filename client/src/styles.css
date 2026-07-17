@@ -150,32 +150,11 @@ body {
 #footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 6px 20px;
   background: #252526;
   border-top: 1px solid #3c3c3c;
   font-size: 12px;
-}
-
-#github-link {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  color: #808080;
-  text-decoration: none;
-  transition: color 0.2s;
-}
-
-#github-link:hover {
-  color: #d4d4d4;
-}
-
-#github-link svg {
-  opacity: 0.7;
-}
-
-#github-link:hover svg {
-  opacity: 1;
 }
 
 #about-btn {
