@@ -9,15 +9,20 @@ CREATE TABLE IF NOT EXISTS documents (
   updated_at TIMESTAMP DEFAULT NOW()
 );
 
--- Track keyboard activity
+-- Track keyboard activity. client_id is the localStorage UUID (nullable:
+-- rows from before the column existed key by username instead) — it's what
+-- host stats group by, so renames don't split a person's numbers.
 CREATE TABLE IF NOT EXISTS activity_logs (
   id SERIAL PRIMARY KEY,
   room_id VARCHAR(255) NOT NULL,
   username VARCHAR(255) NOT NULL,
   keystroke_count INTEGER NOT NULL,
   in_editor BOOLEAN NOT NULL,
+  client_id VARCHAR(36),
   recorded_at TIMESTAMP DEFAULT NOW()
 );
+-- Idempotent migration for volumes created before client_id existed.
+ALTER TABLE activity_logs ADD COLUMN IF NOT EXISTS client_id VARCHAR(36);
 
 -- User sessions
 CREATE TABLE IF NOT EXISTS users (

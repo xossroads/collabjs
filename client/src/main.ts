@@ -123,7 +123,7 @@ async function init() {
   themeSelect.value = initialTheme.id;
 
   // Activity tracker (editor only)
-  const activityTracker = new ActivityTracker(roomId, username);
+  const activityTracker = new ActivityTracker(roomId, username, clientId);
 
   // Determine WebSocket URL
   // In development (Vite on 5173), connect directly to Hocuspocus on port 3000
@@ -144,6 +144,7 @@ async function init() {
     container: editorContainer,
     roomId,
     username,
+    clientId,
     wsUrl,
     initialTheme: initialTheme.extension,
     onFocus: () => {},
@@ -447,7 +448,8 @@ async function setupHostFlow(
     if (seq !== statsRequestSeq) return;
 
     if (result.ok) {
-      roomStats = new Map(result.stats.map((s) => [s.username, s]));
+      // Keyed by clientId; legacy rows (null clientId) key by username.
+      roomStats = new Map(result.stats.map((s) => [s.clientId ?? s.username, s]));
       roomStatsTotal = result.stats.reduce((sum, s) => sum + s.keystrokes, 0);
       statsError = null;
       renderDashboardDetail();
@@ -524,9 +526,9 @@ async function setupHostFlow(
       return;
     }
 
-    // Stats are keyed by the activity-log username; awareness names match
-    // as long as the user hasn't renamed mid-session (known limitation).
-    const stats = roomStats.get(user.name);
+    // Exact match by the clientId the user broadcasts via awareness; falls
+    // back to name matching for peers on old clients / legacy rows.
+    const stats = roomStats.get(user.clientId ?? user.name);
     if (!stats || stats.keystrokes === 0) {
       const none = document.createElement('p');
       none.className = 'dashboard-detail-empty';

@@ -26,12 +26,13 @@ export async function logActivity(
   roomId: string,
   username: string,
   keystrokeCount: number,
-  inEditor: boolean
+  inEditor: boolean,
+  clientId: string
 ): Promise<void> {
   await pool.query(
-    `INSERT INTO activity_logs (room_id, username, keystroke_count, in_editor)
-     VALUES ($1, $2, $3, $4)`,
-    [roomId, username, keystrokeCount, inEditor]
+    `INSERT INTO activity_logs (room_id, username, keystroke_count, in_editor, client_id)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [roomId, username, keystrokeCount, inEditor, clientId]
   );
 }
 
@@ -45,10 +46,13 @@ export async function upsertUser(username: string, clientId: string): Promise<vo
   );
 }
 
-// Per-user activity aggregates for a room, hottest typist first. Keyed by
-// username, so a mid-session rename splits one person across two rows —
-// accepted limitation of the activity_logs identity model.
+// Per-user activity aggregates for a room, hottest typist first. Grouped by
+// client_id so renames don't split a person's stats; legacy rows (NULL
+// client_id) fall back to grouping by username. The reported username is the
+// latest one seen for the group, so a renamed user shows under their current
+// name.
 export interface RoomUserStats {
+  client_id: string | null;
   username: string;
   keystrokes: number;
   first_active: Date;
@@ -59,13 +63,14 @@ export async function getRoomActivityStats(
   roomId: string
 ): Promise<RoomUserStats[]> {
   const result = await pool.query(
-    `SELECT username,
+    `SELECT client_id,
+            (ARRAY_AGG(username ORDER BY recorded_at DESC))[1] AS username,
             SUM(keystroke_count)::int AS keystrokes,
             MIN(recorded_at) AS first_active,
             MAX(recorded_at) AS last_active
        FROM activity_logs
       WHERE room_id = $1
-      GROUP BY username
+      GROUP BY COALESCE(client_id, username), client_id
       ORDER BY keystrokes DESC`,
     [roomId]
   );

@@ -117,10 +117,12 @@ type HostActionFailure = {
 export type LogoutAllResult = { ok: true } | HostActionFailure;
 export type NukeResult = { ok: true; nextRoomId: string } | HostActionFailure;
 
-// Per-user activity aggregates for the dashboard detail pane. Keyed by
-// username (same caveat as the server: renames split stats). Timestamps
-// are ISO strings straight off the wire.
+// Per-user activity aggregates for the dashboard detail pane. Grouped by
+// clientId (localStorage UUID) so renames don't split stats; null clientId
+// means a legacy row grouped by username. username is the latest name seen
+// for the group. Timestamps are ISO strings straight off the wire.
 export interface RoomUserStats {
+  clientId: string | null;
   username: string;
   keystrokes: number;
   firstActive: string;
@@ -151,6 +153,7 @@ export async function fetchRoomStats(
         const stats: RoomUserStats[] = [];
         for (const row of body.stats) {
           if (
+            (row?.clientId !== null && typeof row?.clientId !== 'string') ||
             typeof row?.username !== 'string' ||
             typeof row?.keystrokes !== 'number' ||
             !Number.isFinite(row.keystrokes) ||
@@ -160,6 +163,7 @@ export async function fetchRoomStats(
             return { ok: false, reason: 'server' };
           }
           stats.push({
+            clientId: row.clientId,
             username: row.username,
             keystrokes: row.keystrokes,
             firstActive: row.firstActive,

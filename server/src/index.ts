@@ -267,13 +267,14 @@ if (isProduction) {
 
 // Activity logging endpoint
 app.post('/api/activity', async (req, res) => {
-  const { roomId, username, keystrokeCount, inEditor } = req.body ?? {};
+  const { roomId, username, keystrokeCount, inEditor, clientId } = req.body ?? {};
 
   if (
     !isRoomId(roomId) ||
     !isString(username, MAX_USERNAME_LEN) ||
     !isCount(keystrokeCount) ||
-    typeof inEditor !== 'boolean'
+    typeof inEditor !== 'boolean' ||
+    !isUuid(clientId)
   ) {
     return res.status(400).json({ error: 'Invalid request body' });
   }
@@ -283,7 +284,7 @@ app.post('/api/activity', async (req, res) => {
   }
 
   try {
-    await logActivity(roomId, username, keystrokeCount, inEditor);
+    await logActivity(roomId, username, keystrokeCount, inEditor, clientId);
     res.json({ success: true, persisted: true });
   } catch (error) {
     console.error('Error logging activity:', error);
@@ -545,6 +546,7 @@ app.get('/api/rooms/:id/host/stats', requireHost, async (req: HostRequest, res) 
     const rows = await getRoomActivityStats(roomId);
     res.json({
       stats: rows.map((row) => ({
+        clientId: row.client_id,
         username: row.username,
         keystrokes: row.keystrokes,
         firstActive: row.first_active.toISOString(),

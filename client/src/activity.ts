@@ -2,11 +2,13 @@ export class ActivityTracker {
   private keystrokeCount = 0;
   private roomId: string;
   private username: string;
+  private clientId: string;
   private flushInterval: number | null = null;
 
-  constructor(roomId: string, username: string) {
+  constructor(roomId: string, username: string, clientId: string) {
     this.roomId = roomId;
     this.username = username;
+    this.clientId = clientId;
     this.startAutoFlush();
     this.setupVisibilityHandler();
   }
@@ -52,6 +54,7 @@ export class ActivityTracker {
       username: this.username,
       keystrokeCount: this.keystrokeCount,
       inEditor: true,
+      clientId: this.clientId,
     };
 
     this.keystrokeCount = 0;
@@ -75,6 +78,7 @@ export class ActivityTracker {
       username: this.username,
       keystrokeCount: this.keystrokeCount,
       inEditor: true,
+      clientId: this.clientId,
     };
 
     // Use sendBeacon for reliable delivery on page unload
