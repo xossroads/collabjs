@@ -49,6 +49,20 @@ function getRoomId(): string {
   return newRoomId;
 }
 
+// Inject the AdSense loader only when a publisher id is configured
+// (VITE_ADSENSE_CLIENT in client/.env, gitignored — baked in at build time).
+// Keeps the id out of the repo and means forks/dev machines without the var
+// simply serve no ads. The CSP in index.html already allowlists the ad hosts.
+function loadAdsense(): void {
+  const client = import.meta.env.VITE_ADSENSE_CLIENT;
+  if (!client || !/^ca-pub-\d+$/.test(client)) return;
+  const script = document.createElement('script');
+  script.async = true;
+  script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
+  script.crossOrigin = 'anonymous';
+  document.head.appendChild(script);
+}
+
 // Initialize app
 async function init() {
   const roomId = getRoomId();
@@ -920,4 +934,5 @@ async function setupHostFlow(
 }
 
 // Start the app
+loadAdsense();
 init().catch(console.error);
