@@ -538,14 +538,14 @@ body {
   padding: 0;
   background: none;
   border: none;
-  color: #6cb6ff;
+  color: #9d9d9d;
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
 }
 
 .dashboard-back:hover {
-  text-decoration: underline;
+  color: #d4d4d4;
 }
 
 .dashboard-kick {
