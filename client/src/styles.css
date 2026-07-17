@@ -146,6 +146,11 @@ body {
   overflow: hidden;
 }
 
+/* Bottom dock: stack editor over the panel instead of side-by-side. */
+#main-container.dock-bottom {
+  flex-direction: column;
+}
+
 /* Footer */
 #footer {
   display: flex;
@@ -208,10 +213,18 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 #resize-handle:hover {
   background: #4a4a4a;
+}
+
+/* Bottom dock: the handle spans horizontally and resizes height. */
+.dock-bottom #resize-handle {
+  width: auto;
+  height: 8px;
+  cursor: row-resize;
 }
 
 .resize-grip {
@@ -227,6 +240,18 @@ body {
   border-radius: 2px;
 }
 
+.dock-bottom .resize-grip {
+  width: 40px;
+  height: 4px;
+  background: repeating-linear-gradient(
+    to right,
+    #666 0px,
+    #666 2px,
+    transparent 2px,
+    transparent 6px
+  );
+}
+
 #editor-container .cm-editor {
   height: 100%;
 }
@@ -239,9 +264,20 @@ body {
 
 #output-panel {
   width: 400px;
+  min-width: 320px;
   display: flex;
   flex-direction: column;
   background: #1e1e1e;
+  flex-shrink: 0;
+}
+
+/* Bottom dock: the panel is a full-width strip; height (not width) is what
+   varies, and it must clear the 250px-tall ad plus the header. */
+.dock-bottom #output-panel {
+  width: auto;
+  min-width: 0;
+  height: 340px;
+  min-height: 290px;
 }
 
 #output-header {
@@ -253,6 +289,75 @@ body {
   border-bottom: 1px solid #3c3c3c;
   font-size: 13px;
   color: #808080;
+  flex-shrink: 0;
+}
+
+#output-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#dock-toggle {
+  display: flex;
+  gap: 2px;
+}
+
+#dock-toggle button {
+  padding: 2px 7px;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  color: #808080;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+#dock-toggle button:first-child {
+  border-radius: 3px 0 0 3px;
+}
+
+#dock-toggle button:last-child {
+  border-radius: 0 3px 3px 0;
+}
+
+#dock-toggle button:hover {
+  color: #d4d4d4;
+}
+
+#dock-toggle button.active {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+/* Content + ad rectangle. Right dock stacks them (ad below the console);
+   bottom dock lays them side-by-side (ad to the right). Either way the ad
+   lands in the panel's bottom-right corner. */
+#output-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dock-bottom #output-body {
+  flex-direction: row;
+}
+
+/* Fixed 300x250 rectangle. align-self:flex-end lands it on the cross-axis
+   end, and being the last flex child lands it on the main-axis end — so it
+   sits flush in the panel's bottom-right corner in both dock modes. */
+#ad-slot {
+  flex-shrink: 0;
+  align-self: flex-end;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 300px;
+  height: 250px;
+  background: #1a1a1a;
+  border: 1px dashed #3c3c3c;
 }
 
 #clear-output {
@@ -272,6 +377,8 @@ body {
 
 #output-content {
   flex: 1;
+  min-width: 0;
+  min-height: 0;
   overflow-y: auto;
   padding: 12px;
   font-family: 'Fira Code', 'Consolas', monospace;

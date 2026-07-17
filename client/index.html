@@ -59,9 +59,20 @@
       <div id="output-panel">
         <div id="output-header">
           <span>Console Output</span>
-          <button id="clear-output">Clear</button>
+          <div id="output-header-actions">
+            <div id="dock-toggle" role="group" aria-label="Output panel position">
+              <button id="dock-right" title="Dock panel to the right" aria-label="Dock panel to the right">◨</button>
+              <button id="dock-bottom" title="Dock panel to the bottom" aria-label="Dock panel to the bottom">⬓</button>
+            </div>
+            <button id="clear-output">Clear</button>
+          </div>
         </div>
-        <div id="output-content"></div>
+        <div id="output-body">
+          <div id="output-content"></div>
+          <div id="ad-slot">
+            <ins class="adsbygoogle" style="display:inline-block;width:300px;height:250px"></ins>
+          </div>
+        </div>
       </div>
     </div>
     <footer id="footer">

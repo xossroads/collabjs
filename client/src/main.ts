@@ -63,6 +63,22 @@ function loadAdsense(): void {
   script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
   script.crossOrigin = 'anonymous';
   document.head.appendChild(script);
+
+  // Fill the reserved 300x250 slot — but only when a real ad unit id is
+  // configured (VITE_ADSENSE_SLOT). Pushing with a client but no slot makes
+  // AdSense log a console error, so with no slot we leave the loader present
+  // and the dashed placeholder box in place (no push). Either way the
+  // reserved space is unchanged, so layout never shifts.
+  const slot = import.meta.env.VITE_ADSENSE_SLOT;
+  const ins = document.querySelector<HTMLElement>('#ad-slot .adsbygoogle');
+  if (!ins || !slot) return;
+  ins.setAttribute('data-ad-client', client);
+  ins.setAttribute('data-ad-slot', slot);
+  try {
+    ((window as unknown as { adsbygoogle: unknown[] }).adsbygoogle ??= []).push({});
+  } catch {
+    // adsbygoogle not ready / blocked — placeholder box remains.
+  }
 }
 
 // Initialize app
@@ -86,6 +102,9 @@ async function init() {
   const clearOutputBtn = document.getElementById('clear-output')!;
   const resizeHandle = document.getElementById('resize-handle')!;
   const outputPanel = document.getElementById('output-panel')!;
+  const mainContainer = document.getElementById('main-container')!;
+  const dockRightBtn = document.getElementById('dock-right')!;
+  const dockBottomBtn = document.getElementById('dock-bottom')!;
   const aboutBtn = document.getElementById('about-btn')!;
   const aboutModal = document.getElementById('about-modal')!;
   const closeAboutBtn = document.getElementById('close-about-btn')!;
@@ -222,31 +241,89 @@ async function init() {
     sharedConsole.clear();
   });
 
-  // Resizable panel
+  // Output panel docking (right | bottom) + resize, both persisted. Right
+  // dock resizes width (col-resize); bottom dock resizes height (row-resize).
+  const DOCK_KEY = 'collabjs_panel_dock';
+  const WIDTH_KEY = 'collabjs_panel_width';
+  const HEIGHT_KEY = 'collabjs_panel_height';
+  const MIN_WIDTH = 320; // must clear the 300px ad
+  const MAX_WIDTH = 800;
+  const MIN_HEIGHT = 290; // header + 250px ad
+  type Dock = 'right' | 'bottom';
+
+  const readSize = (key: string, fallback: number, min: number, max: number) => {
+    const n = Number(localStorage.getItem(key));
+    return Number.isFinite(n) && n > 0 ? Math.max(min, Math.min(max, n)) : fallback;
+  };
+
+  const applyDock = (dock: Dock) => {
+    mainContainer.classList.toggle('dock-bottom', dock === 'bottom');
+    dockRightBtn.classList.toggle('active', dock === 'right');
+    dockBottomBtn.classList.toggle('active', dock === 'bottom');
+    // Clear the inline dimension the other dock set, then apply this dock's.
+    if (dock === 'right') {
+      outputPanel.style.height = '';
+      outputPanel.style.width = `${readSize(WIDTH_KEY, 400, MIN_WIDTH, MAX_WIDTH)}px`;
+    } else {
+      outputPanel.style.width = '';
+      const maxHeight = Math.round(window.innerHeight * 0.7);
+      outputPanel.style.height = `${readSize(HEIGHT_KEY, 340, MIN_HEIGHT, maxHeight)}px`;
+    }
+  };
+
+  let dock: Dock = localStorage.getItem(DOCK_KEY) === 'bottom' ? 'bottom' : 'right';
+  applyDock(dock);
+
+  const setDock = (next: Dock) => {
+    if (next === dock) return;
+    dock = next;
+    localStorage.setItem(DOCK_KEY, dock);
+    applyDock(dock);
+  };
+  dockRightBtn.addEventListener('click', () => setDock('right'));
+  dockBottomBtn.addEventListener('click', () => setDock('bottom'));
+
   let isResizing = false;
-  let startX = 0;
-  let startWidth = 0;
+  let startPos = 0;
+  let startSize = 0;
 
   resizeHandle.addEventListener('mousedown', (e) => {
     isResizing = true;
-    startX = e.clientX;
-    startWidth = outputPanel.offsetWidth;
-    document.body.style.cursor = 'col-resize';
+    if (dock === 'right') {
+      startPos = e.clientX;
+      startSize = outputPanel.offsetWidth;
+    } else {
+      startPos = e.clientY;
+      startSize = outputPanel.offsetHeight;
+    }
+    document.body.style.cursor = dock === 'right' ? 'col-resize' : 'row-resize';
     document.body.style.userSelect = 'none';
   });
 
   document.addEventListener('mousemove', (e) => {
     if (!isResizing) return;
-    const diff = startX - e.clientX;
-    const newWidth = Math.max(200, Math.min(800, startWidth + diff));
-    outputPanel.style.width = `${newWidth}px`;
+    // Panel is on the far side, so it grows as the pointer moves toward the
+    // top-left (smaller clientX/clientY): size = start + (start pos - now).
+    if (dock === 'right') {
+      const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, startSize + (startPos - e.clientX)));
+      outputPanel.style.width = `${newWidth}px`;
+    } else {
+      const maxHeight = Math.round(window.innerHeight * 0.7);
+      const newHeight = Math.max(MIN_HEIGHT, Math.min(maxHeight, startSize + (startPos - e.clientY)));
+      outputPanel.style.height = `${newHeight}px`;
+    }
   });
 
   document.addEventListener('mouseup', () => {
-    if (isResizing) {
-      isResizing = false;
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+    if (!isResizing) return;
+    isResizing = false;
+    document.body.style.cursor = '';
+    document.body.style.userSelect = '';
+    // Persist the dimension this dock controls.
+    if (dock === 'right') {
+      localStorage.setItem(WIDTH_KEY, String(outputPanel.offsetWidth));
+    } else {
+      localStorage.setItem(HEIGHT_KEY, String(outputPanel.offsetHeight));
     }
   });
 
