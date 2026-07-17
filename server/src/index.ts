@@ -54,6 +54,36 @@ const MAX_WS_PER_IP = (() => {
 })();
 const wsConnectionsByIp = new Map<string, number>();
 
+// Kick bans, keyed "roomId:clientId" → expiry epoch ms. In-memory (single
+// process) and best-effort: clientId is the client's localStorage UUID, so
+// clearing localStorage evades the ban. Entries are lazily purged on lookup.
+const KICK_BAN_MS = 10 * 60 * 1000;
+const kickBans = new Map<string, number>();
+
+// socketId → clientId for live WS connections, so the kick endpoint can find
+// a user's sockets. Kept ourselves because Hocuspocus's onConnect context
+// merge races connection setup (the Connection can capture the pre-merge
+// context object), which made Connection.context unreliable for this.
+// Populated in the `connected` hook (established connections only, so every
+// entry gets a matching onDisconnect cleanup).
+const wsClientIdBySocket = new Map<string, string>();
+
+function clientIdFromParams(requestParameters: URLSearchParams): string | null {
+  const raw = requestParameters.get('clientId');
+  return isUuid(raw) ? raw : null;
+}
+
+function isKickBanned(roomId: string, clientId: string): boolean {
+  const key = `${roomId}:${clientId}`;
+  const expiry = kickBans.get(key);
+  if (expiry === undefined) return false;
+  if (Date.now() >= expiry) {
+    kickBans.delete(key);
+    return false;
+  }
+  return true;
+}
+
 // Rooms currently being deleted by a host. The fetch/store hooks and onConnect
 // short-circuit for any room in this set so that:
 //   - Hocuspocus's final save during unloadDocument doesn't re-create the
@@ -110,7 +140,7 @@ const hocuspocus = Server.configure({
     }),
   ],
 
-  async onConnect({ documentName, request, requestHeaders, socketId }) {
+  async onConnect({ documentName, request, requestHeaders, requestParameters, socketId }) {
     const ip = getClientIp(request, requestHeaders);
 
     // Reject malformed document names. Throwing rejects the connection.
@@ -125,6 +155,22 @@ const hocuspocus = Server.configure({
     // could hold the doc in memory while we're deleting it.
     if (roomsBeingNuked.has(documentName)) {
       throw new Error('Room is being deleted');
+    }
+
+    // The client identifies itself with its localStorage UUID as a query
+    // param on the WS URL. Missing/malformed just means this connection
+    // can't be targeted by a kick — old clients keep working.
+    //
+    // Note this ban check is only a fast-path socket close: the provider
+    // sends an Auth message first, and Hocuspocus establishes that path
+    // concurrently with onConnect, so a throw here can lose the race. The
+    // authoritative, race-free rejection is in onAuthenticate below.
+    const clientId = clientIdFromParams(requestParameters);
+    if (clientId && isKickBanned(documentName, clientId)) {
+      console.warn(
+        `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId} ip=${sanitizeForLog(ip)}`
+      );
+      throw new Error('Kicked');
     }
 
     // Enforce per-IP connection cap. Count is incremented here and decremented
@@ -143,8 +189,32 @@ const hocuspocus = Server.configure({
     );
   },
 
+  // The provider always sends an Auth message (empty token) right after the
+  // socket opens, and this hook runs sequentially in that path — a throw
+  // here reliably prevents the connection from ever being established (no
+  // awareness applied, nothing broadcast). This is where the kick ban is
+  // actually enforced.
+  async onAuthenticate({ documentName, requestParameters }) {
+    const clientId = clientIdFromParams(requestParameters);
+    if (clientId && isKickBanned(documentName, clientId)) {
+      console.warn(
+        `WS reject (kicked, auth) room=${sanitizeForLog(documentName)} clientId=${clientId}`
+      );
+      throw new Error('Kicked');
+    }
+  },
+
+  // Fires only for fully established connections — the reliable place to
+  // record socketId → clientId (rejected attempts never land here, so the
+  // map can't leak entries that onDisconnect won't clean up).
+  async connected({ requestParameters, socketId }) {
+    const clientId = clientIdFromParams(requestParameters);
+    if (clientId) wsClientIdBySocket.set(socketId, clientId);
+  },
+
   async onDisconnect({ documentName, requestHeaders, socketId, clientsCount }) {
     const ip = getClientIp(undefined, requestHeaders);
+    wsClientIdBySocket.delete(socketId);
 
     const current = wsConnectionsByIp.get(ip) ?? 0;
     if (current <= 1) {
@@ -556,6 +626,45 @@ app.get('/api/rooms/:id/host/stats', requireHost, async (req: HostRequest, res) 
   } catch (error) {
     console.error('host stats failed:', error);
     res.status(500).json({ error: 'Stats unavailable' });
+  }
+});
+
+// Kick a user: ban their clientId for KICK_BAN_MS, tell their connections
+// they were kicked (so the client tears down instead of auto-reconnecting),
+// then close those sockets. Best-effort — see the kickBans comment.
+app.post('/api/rooms/:id/host/kick', requireHost, async (req: HostRequest, res) => {
+  const roomId = req.hostRoomId!;
+  const { clientId } = req.body ?? {};
+  if (!isUuid(clientId)) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
+  try {
+    // Ban first so a reconnect racing the close is already rejected.
+    kickBans.set(`${roomId}:${clientId}`, Date.now() + KICK_BAN_MS);
+
+    const doc = hocuspocus.documents.get(roomId);
+    const targets = doc
+      ? doc.getConnections().filter((c) => wsClientIdBySocket.get(c.socketId) === clientId)
+      : [];
+    for (const conn of targets) {
+      conn.sendStateless(JSON.stringify({ type: 'kicked' }));
+    }
+    if (targets.length > 0) {
+      // Give the WS buffer a moment to flush before closing, same as nuke.
+      await new Promise((r) => setTimeout(r, 100));
+      for (const conn of targets) {
+        conn.close();
+      }
+    }
+
+    console.log(
+      `HOST kick room=${sanitizeForLog(roomId)} clientId=${clientId} connections=${targets.length}`
+    );
+    res.json({ kicked: targets.length });
+  } catch (error) {
+    console.error('kick failed:', error);
+    res.status(500).json({ error: 'Kick failed' });
   }
 });
 

@@ -11,6 +11,7 @@ import {
 import {
   setupAwarenessListener,
   getConnectedUsers,
+  type UserState,
 } from './awareness';
 import type { Awareness } from 'y-protocols/awareness';
 import {
@@ -30,6 +31,7 @@ import {
   storeHostToken,
   clearHostToken,
   fetchRoomStats,
+  kickUser,
   type RoomUserStats,
 } from './host';
 
@@ -130,9 +132,11 @@ async function init() {
   // In production, use /ws path (nginx proxies to Hocuspocus)
   const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const isDev = window.location.port === '5173';
+  // clientId rides along as a query param so the server can tag this
+  // connection (Connection.context) — that's what the host kick targets.
   const wsUrl = isDev
-    ? `${wsProtocol}//${window.location.hostname}:3000`
-    : `${wsProtocol}//${window.location.host}/ws`;
+    ? `${wsProtocol}//${window.location.hostname}:3000?clientId=${clientId}`
+    : `${wsProtocol}//${window.location.host}/ws?clientId=${clientId}`;
 
   // Create collaborative editor
   // Deferred ref for the host-state-changed handler. setupHostFlow assigns
@@ -161,6 +165,13 @@ async function init() {
         // pre-nuke content back into the empty server doc.
         clearHostToken(roomId);
         window.location.replace(`/room/${msg.nextRoomId}`);
+      } else if (msg.type === 'kicked') {
+        // The host removed us. Tear down before the server closes the
+        // socket so the provider doesn't auto-reconnect into the ban, then
+        // show the (non-dismissable) overlay.
+        activityTracker.destroy();
+        editor.destroy();
+        document.getElementById('kicked-overlay')!.classList.remove('hidden');
       } else if (msg.type === 'host-state-changed') {
         // Claim/login/logout-all happened somewhere. Re-fetch and reconcile
         // UI live so other tabs don't keep showing stale state until reload.
@@ -308,6 +319,11 @@ async function init() {
     if (e.target === usernameModal) {
       hideUsernameModal();
     }
+  });
+
+  // Kicked overlay: the only way out is a fresh room.
+  document.getElementById('kicked-new-room')!.addEventListener('click', () => {
+    window.location.replace(`/room/${crypto.randomUUID()}`);
   });
 
   // Register user with server
@@ -485,32 +501,7 @@ async function setupHostFlow(
     dl.appendChild(row);
   };
 
-  const renderDashboardDetail = () => {
-    dashboardDetail.innerHTML = '';
-    if (selectedClientId === null) {
-      const empty = document.createElement('p');
-      empty.className = 'dashboard-detail-empty';
-      empty.textContent = 'Select a user to see details.';
-      dashboardDetail.appendChild(empty);
-      return;
-    }
-    const user = getConnectedUsers(awareness).get(selectedClientId);
-    if (!user) {
-      // Selected user disconnected; fall back to empty state.
-      selectedClientId = null;
-      renderDashboardDetail();
-      return;
-    }
-    const heading = document.createElement('h3');
-    const dot = document.createElement('span');
-    dot.className = 'user-dot';
-    dot.style.backgroundColor = user.color;
-    const name = document.createElement('span');
-    name.textContent = user.name;
-    heading.appendChild(dot);
-    heading.appendChild(name);
-    dashboardDetail.appendChild(heading);
-
+  const renderDetailStats = (user: UserState) => {
     if (statsError) {
       const err = document.createElement('p');
       err.className = 'dashboard-detail-error';
@@ -557,13 +548,92 @@ async function setupHostFlow(
     bar.appendChild(fill);
     dashboardDetail.appendChild(bar);
 
-    // Share is computed against every username with activity in the room's
+    // Share is computed against every user with activity in the room's
     // logs — including people who have since left — so it reflects the
     // room's whole history, not just who's connected right now.
     const note = document.createElement('p');
     note.className = 'dashboard-detail-note';
     note.textContent = 'Share is measured against all activity ever recorded in this room.';
     dashboardDetail.appendChild(note);
+  };
+
+  // Kick lives at the bottom of the detail pane. Only targetable users get
+  // it — a peer without a broadcast clientId (old client) can't be matched
+  // to a connection server-side. Two-click confirm instead of a third modal.
+  const appendKickButton = (user: UserState) => {
+    const targetId = user.clientId;
+    if (!targetId) return;
+    const btn = document.createElement('button');
+    btn.className = 'danger dashboard-kick';
+    btn.textContent = 'Kick from room…';
+    let armed = false;
+    let disarmTimer = 0;
+    btn.addEventListener('click', async () => {
+      if (!armed) {
+        armed = true;
+        btn.textContent = 'Confirm kick';
+        disarmTimer = window.setTimeout(() => {
+          armed = false;
+          btn.textContent = 'Kick from room…';
+        }, 3000);
+        return;
+      }
+      window.clearTimeout(disarmTimer);
+      btn.disabled = true;
+      btn.textContent = 'Kicking…';
+      const token = getStoredHostToken(roomId);
+      if (!token) {
+        setButtonState('login');
+        closeMenuModal();
+        return;
+      }
+      const result = await kickUser(roomId, token, targetId);
+      if (result.ok) {
+        // Their disconnect fires the awareness listener, which re-renders
+        // the sidebar and clears the selection — nothing to do here.
+        return;
+      }
+      if (result.reason === 'unauthorized' || result.reason === 'forbidden') {
+        clearHostToken(roomId);
+        setButtonState('login');
+        closeMenuModal();
+        return;
+      }
+      btn.disabled = false;
+      armed = false;
+      btn.textContent = 'Kick failed — try again';
+    });
+    dashboardDetail.appendChild(btn);
+  };
+
+  const renderDashboardDetail = () => {
+    dashboardDetail.innerHTML = '';
+    if (selectedClientId === null) {
+      const empty = document.createElement('p');
+      empty.className = 'dashboard-detail-empty';
+      empty.textContent = 'Select a user to see details.';
+      dashboardDetail.appendChild(empty);
+      return;
+    }
+    const user = getConnectedUsers(awareness).get(selectedClientId);
+    if (!user) {
+      // Selected user disconnected; fall back to empty state.
+      selectedClientId = null;
+      renderDashboardDetail();
+      return;
+    }
+    const heading = document.createElement('h3');
+    const dot = document.createElement('span');
+    dot.className = 'user-dot';
+    dot.style.backgroundColor = user.color;
+    const name = document.createElement('span');
+    name.textContent = user.name;
+    heading.appendChild(dot);
+    heading.appendChild(name);
+    dashboardDetail.appendChild(heading);
+
+    renderDetailStats(user);
+    appendKickButton(user);
   };
 
   const renderDashboardUsers = () => {

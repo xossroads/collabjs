@@ -213,9 +213,13 @@ export async function logoutAllHostSessions(roomId: string, token: string): Prom
 //                       push pre-nuke content into the empty server doc).
 //   host-state-changed — claim/login/logout-all happened; refetch host status
 //                        and update the UI without reloading.
+//   kicked             — sent only to the kicked user's connections just
+//                        before the server closes them; tear down and show
+//                        the removed-by-host overlay.
 export type HostStatelessMessage =
   | { type: 'room-nuked'; nextRoomId: string }
-  | { type: 'host-state-changed' };
+  | { type: 'host-state-changed' }
+  | { type: 'kicked' };
 
 export function parseHostStatelessMessage(payload: string): HostStatelessMessage | null {
   try {
@@ -228,10 +232,38 @@ export function parseHostStatelessMessage(payload: string): HostStatelessMessage
       return null;
     }
     if (parsed?.type === 'host-state-changed') return { type: 'host-state-changed' };
+    if (parsed?.type === 'kicked') return { type: 'kicked' };
     return null;
   } catch {
     return null;
   }
+}
+
+export type KickResult = { ok: true } | HostActionFailure;
+
+export async function kickUser(
+  roomId: string,
+  token: string,
+  clientId: string
+): Promise<KickResult> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/host/kick`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ clientId }),
+    });
+  } catch {
+    return { ok: false, reason: 'network' };
+  }
+  if (res.ok) return { ok: true };
+  if (res.status === 401) return { ok: false, reason: 'unauthorized' };
+  if (res.status === 403) return { ok: false, reason: 'forbidden' };
+  if (res.status === 503) return { ok: false, reason: 'unavailable' };
+  return { ok: false, reason: 'server' };
 }
 
 export async function nukeRoom(roomId: string, token: string): Promise<NukeResult> {

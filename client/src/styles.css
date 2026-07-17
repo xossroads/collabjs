@@ -532,6 +532,31 @@ body {
   font-size: 11px;
 }
 
+.dashboard-kick {
+  margin-top: 20px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  background: #a1322c;
+  color: white;
+}
+
+.dashboard-kick:hover:not(:disabled) {
+  background: #b53b34;
+}
+
+.dashboard-kick:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#kicked-new-room {
+  background: #0e639c;
+  color: white;
+}
+
 .modal-content h2 {
   margin-bottom: 20px;
   font-size: 18px;
