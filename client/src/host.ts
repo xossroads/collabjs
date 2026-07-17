@@ -117,6 +117,68 @@ type HostActionFailure = {
 export type LogoutAllResult = { ok: true } | HostActionFailure;
 export type NukeResult = { ok: true; nextRoomId: string } | HostActionFailure;
 
+// Per-user activity aggregates for the dashboard detail pane. Keyed by
+// username (same caveat as the server: renames split stats). Timestamps
+// are ISO strings straight off the wire.
+export interface RoomUserStats {
+  username: string;
+  keystrokes: number;
+  firstActive: string;
+  lastActive: string;
+}
+
+export type RoomStatsResult =
+  | { ok: true; stats: RoomUserStats[] }
+  | HostActionFailure;
+
+export async function fetchRoomStats(
+  roomId: string,
+  token: string
+): Promise<RoomStatsResult> {
+  let res: Response;
+  try {
+    res = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/host/stats`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { ok: false, reason: 'network' };
+  }
+
+  if (res.ok) {
+    try {
+      const body = await res.json();
+      if (Array.isArray(body?.stats)) {
+        const stats: RoomUserStats[] = [];
+        for (const row of body.stats) {
+          if (
+            typeof row?.username !== 'string' ||
+            typeof row?.keystrokes !== 'number' ||
+            !Number.isFinite(row.keystrokes) ||
+            typeof row?.firstActive !== 'string' ||
+            typeof row?.lastActive !== 'string'
+          ) {
+            return { ok: false, reason: 'server' };
+          }
+          stats.push({
+            username: row.username,
+            keystrokes: row.keystrokes,
+            firstActive: row.firstActive,
+            lastActive: row.lastActive,
+          });
+        }
+        return { ok: true, stats };
+      }
+    } catch {
+      // fall through to server error
+    }
+    return { ok: false, reason: 'server' };
+  }
+  if (res.status === 401) return { ok: false, reason: 'unauthorized' };
+  if (res.status === 403) return { ok: false, reason: 'forbidden' };
+  if (res.status === 503) return { ok: false, reason: 'unavailable' };
+  return { ok: false, reason: 'server' };
+}
+
 // Mirror of the server-side room-id regex. Used at every parse boundary that
 // hands an untrusted string to navigation so a buggy or hostile server (or a
 // stateless message tampered with elsewhere) can't redirect us somewhere

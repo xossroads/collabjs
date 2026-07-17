@@ -45,6 +45,33 @@ export async function upsertUser(username: string, clientId: string): Promise<vo
   );
 }
 
+// Per-user activity aggregates for a room, hottest typist first. Keyed by
+// username, so a mid-session rename splits one person across two rows —
+// accepted limitation of the activity_logs identity model.
+export interface RoomUserStats {
+  username: string;
+  keystrokes: number;
+  first_active: Date;
+  last_active: Date;
+}
+
+export async function getRoomActivityStats(
+  roomId: string
+): Promise<RoomUserStats[]> {
+  const result = await pool.query(
+    `SELECT username,
+            SUM(keystroke_count)::int AS keystrokes,
+            MIN(recorded_at) AS first_active,
+            MAX(recorded_at) AS last_active
+       FROM activity_logs
+      WHERE room_id = $1
+      GROUP BY username
+      ORDER BY keystrokes DESC`,
+    [roomId]
+  );
+  return result.rows;
+}
+
 export async function testConnection(): Promise<boolean> {
   try {
     await pool.query('SELECT 1');

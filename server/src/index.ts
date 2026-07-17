@@ -19,6 +19,7 @@ import {
   getHostSession,
   revokeAllHostSessions,
   deleteRoom,
+  getRoomActivityStats,
 } from './database.js';
 import { startCleanupJob } from './cleanup.js';
 import { getClientIp, requestLogger, sanitizeForLog } from './logging.js';
@@ -532,6 +533,27 @@ app.post('/api/rooms/:id/host/logout-all', requireHost, async (req: HostRequest,
   } catch (error) {
     console.error('host logout-all failed:', error);
     res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Per-user activity stats for the dashboard detail pane. Aggregated from
+// activity_logs by username — timestamps come back as ISO strings so the
+// client doesn't have to guess the wire format of a pg Date.
+app.get('/api/rooms/:id/host/stats', requireHost, async (req: HostRequest, res) => {
+  const roomId = req.hostRoomId!;
+  try {
+    const rows = await getRoomActivityStats(roomId);
+    res.json({
+      stats: rows.map((row) => ({
+        username: row.username,
+        keystrokes: row.keystrokes,
+        firstActive: row.first_active.toISOString(),
+        lastActive: row.last_active.toISOString(),
+      })),
+    });
+  } catch (error) {
+    console.error('host stats failed:', error);
+    res.status(500).json({ error: 'Stats unavailable' });
   }
 });
 

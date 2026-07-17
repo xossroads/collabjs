@@ -29,6 +29,8 @@ import {
   getStoredHostToken,
   storeHostToken,
   clearHostToken,
+  fetchRoomStats,
+  type RoomUserStats,
 } from './host';
 
 // Get room ID from URL or generate one. The full UUID gives ~122 bits of
@@ -414,6 +416,59 @@ async function setupHostFlow(
   let selectedClientId: number | null = null;
   let dashboardUnsubscribe: (() => void) | null = null;
 
+  // Activity stats for the detail pane, keyed by username. null while a
+  // fetch is in flight (renders as "Loading…"); statsError set means the
+  // last fetch failed. statsRequestSeq guards against a stale response
+  // overwriting a newer one (open → click can have two fetches racing).
+  let roomStats: Map<string, RoomUserStats> | null = null;
+  let roomStatsTotal = 0;
+  let statsError: string | null = null;
+  let statsRequestSeq = 0;
+
+  const loadDashboardStats = async () => {
+    const token = getStoredHostToken(roomId);
+    if (!token) return;
+    const seq = ++statsRequestSeq;
+    const result = await fetchRoomStats(roomId, token);
+    if (seq !== statsRequestSeq) return;
+
+    if (result.ok) {
+      roomStats = new Map(result.stats.map((s) => [s.username, s]));
+      roomStatsTotal = result.stats.reduce((sum, s) => sum + s.keystrokes, 0);
+      statsError = null;
+      renderDashboardDetail();
+      return;
+    }
+    if (result.reason === 'unauthorized' || result.reason === 'forbidden') {
+      // Same treatment as the other host actions: token is dead, drop it
+      // and fall back to the login button. Closing the menu tears down the
+      // dashboard, so no need to render an error into it.
+      clearHostToken(roomId);
+      setButtonState('login');
+      closeMenuModal();
+      return;
+    }
+    statsError =
+      result.reason === 'unavailable'
+        ? 'Host feature is currently unavailable.'
+        : 'Could not load activity stats.';
+    renderDashboardDetail();
+  };
+
+  // A stat row is a label/value pair; textContent keeps usernames and
+  // anything else inert.
+  const appendStatRow = (dl: HTMLDListElement, label: string, value: string) => {
+    const row = document.createElement('div');
+    row.className = 'stat-row';
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = value;
+    row.appendChild(dt);
+    row.appendChild(dd);
+    dl.appendChild(row);
+  };
+
   const renderDashboardDetail = () => {
     dashboardDetail.innerHTML = '';
     if (selectedClientId === null) {
@@ -440,11 +495,59 @@ async function setupHostFlow(
     heading.appendChild(name);
     dashboardDetail.appendChild(heading);
 
-    const placeholder = document.createElement('p');
-    placeholder.className = 'dashboard-detail-placeholder';
-    placeholder.textContent =
-      'Per-user stats and contributions land in the next slice.';
-    dashboardDetail.appendChild(placeholder);
+    if (statsError) {
+      const err = document.createElement('p');
+      err.className = 'dashboard-detail-error';
+      err.textContent = statsError;
+      dashboardDetail.appendChild(err);
+      return;
+    }
+    if (roomStats === null) {
+      const loading = document.createElement('p');
+      loading.className = 'dashboard-detail-empty';
+      loading.textContent = 'Loading activity…';
+      dashboardDetail.appendChild(loading);
+      return;
+    }
+
+    // Stats are keyed by the activity-log username; awareness names match
+    // as long as the user hasn't renamed mid-session (known limitation).
+    const stats = roomStats.get(user.name);
+    if (!stats || stats.keystrokes === 0) {
+      const none = document.createElement('p');
+      none.className = 'dashboard-detail-empty';
+      none.textContent = 'No recorded activity yet.';
+      dashboardDetail.appendChild(none);
+      return;
+    }
+
+    const dl = document.createElement('dl');
+    dl.className = 'dashboard-stats';
+    appendStatRow(dl, 'Keystrokes', stats.keystrokes.toLocaleString());
+    const share =
+      roomStatsTotal > 0
+        ? Math.round((stats.keystrokes / roomStatsTotal) * 100)
+        : 0;
+    appendStatRow(dl, 'Share of room activity', `${share}%`);
+    appendStatRow(dl, 'First active', new Date(stats.firstActive).toLocaleString());
+    appendStatRow(dl, 'Last active', new Date(stats.lastActive).toLocaleString());
+    dashboardDetail.appendChild(dl);
+
+    const bar = document.createElement('div');
+    bar.className = 'stat-share-bar';
+    const fill = document.createElement('div');
+    fill.className = 'stat-share-fill';
+    fill.style.width = `${share}%`;
+    bar.appendChild(fill);
+    dashboardDetail.appendChild(bar);
+
+    // Share is computed against every username with activity in the room's
+    // logs — including people who have since left — so it reflects the
+    // room's whole history, not just who's connected right now.
+    const note = document.createElement('p');
+    note.className = 'dashboard-detail-note';
+    note.textContent = 'Share is measured against all activity ever recorded in this room.';
+    dashboardDetail.appendChild(note);
   };
 
   const renderDashboardUsers = () => {
@@ -484,6 +587,10 @@ async function setupHostFlow(
         selectedClientId = clientId;
         renderDashboardUsers();
         renderDashboardDetail();
+        // Render cached numbers immediately, then refresh in the background
+        // — activity flushes every 30s, so stats can grow while the modal
+        // is open. The seq guard in loadDashboardStats handles races.
+        void loadDashboardStats();
       });
       dashboardUsers.appendChild(li);
     });
@@ -493,6 +600,11 @@ async function setupHostFlow(
 
   const openMenuModal = () => {
     selectedClientId = null;
+    // Reset to the loading state so a reopened modal doesn't flash stats
+    // from the previous visit, then fetch fresh numbers.
+    roomStats = null;
+    statsError = null;
+    void loadDashboardStats();
     renderDashboardUsers();
     if (!dashboardUnsubscribe) {
       // Only re-render the list while the modal is open. Listener is torn

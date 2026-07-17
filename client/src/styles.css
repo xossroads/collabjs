@@ -478,14 +478,58 @@ body {
   font-style: italic;
 }
 
-.dashboard-detail-placeholder {
+.dashboard-detail-error {
   margin-top: 16px;
   padding: 12px 14px;
   background: #1e1e1e;
-  border: 1px dashed #3c3c3c;
+  border: 1px dashed #5a1d1d;
   border-radius: 6px;
-  color: #9d9d9d;
+  color: #f48771;
   font-size: 12px;
+}
+
+.dashboard-stats {
+  margin: 16px 0 0;
+}
+
+.dashboard-stats .stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #2a2a2b;
+  font-size: 13px;
+}
+
+.dashboard-stats dt {
+  color: #9d9d9d;
+}
+
+.dashboard-stats dd {
+  margin: 0;
+  color: #d4d4d4;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-share-bar {
+  margin-top: 14px;
+  height: 6px;
+  background: #2d2d2e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stat-share-fill {
+  height: 100%;
+  background: #0e639c;
+  border-radius: 3px;
+}
+
+.dashboard-detail-note {
+  margin-top: 8px;
+  color: #707070;
+  font-size: 11px;
 }
 
 .modal-content h2 {
