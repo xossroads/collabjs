@@ -669,7 +669,9 @@ async function setupHostFlow(
     // Back to the room overview (the no-selection summary).
     const back = document.createElement('button');
     back.className = 'dashboard-back';
-    back.textContent = '← Room overview';
+    back.textContent = '‹';
+    back.title = 'Back to room overview';
+    back.setAttribute('aria-label', 'Back to room overview');
     back.addEventListener('click', () => {
       selectedClientId = null;
       renderDashboardUsers(); // clears the selected-row highlight

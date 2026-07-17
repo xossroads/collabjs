@@ -533,13 +533,14 @@ body {
 }
 
 .dashboard-back {
-  display: block;
-  margin-bottom: 14px;
+  display: inline-block;
+  margin-bottom: 10px;
   padding: 0;
   background: none;
   border: none;
   color: #6cb6ff;
-  font-size: 12px;
+  font-size: 22px;
+  line-height: 1;
   cursor: pointer;
 }
 
