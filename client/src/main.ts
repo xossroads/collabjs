@@ -452,6 +452,9 @@ async function setupHostFlow(
   // last fetch failed. statsRequestSeq guards against a stale response
   // overwriting a newer one (open → click can have two fetches racing).
   let roomStats: Map<string, RoomUserStats> | null = null;
+  // Same rows as an ordered list (hottest typist first, as the server sends
+  // them) — the no-selection room summary reads from this.
+  let roomStatsList: RoomUserStats[] | null = null;
   let roomStatsTotal = 0;
   let statsError: string | null = null;
   let statsRequestSeq = 0;
@@ -466,6 +469,7 @@ async function setupHostFlow(
     if (result.ok) {
       // Keyed by clientId; legacy rows (null clientId) key by username.
       roomStats = new Map(result.stats.map((s) => [s.clientId ?? s.username, s]));
+      roomStatsList = result.stats;
       roomStatsTotal = result.stats.reduce((sum, s) => sum + s.keystrokes, 0);
       statsError = null;
       renderDashboardDetail();
@@ -480,6 +484,8 @@ async function setupHostFlow(
       closeMenuModal();
       return;
     }
+    roomStats = null;
+    roomStatsList = null;
     statsError =
       result.reason === 'unavailable'
         ? 'Host feature is currently unavailable.'
@@ -606,13 +612,50 @@ async function setupHostFlow(
     dashboardDetail.appendChild(btn);
   };
 
+  // No-selection view: room-wide aggregates computed from the stats the
+  // dashboard already fetched. Nothing to show until they load — the pane
+  // just keeps the select hint (matching the old behavior for the error and
+  // loading states too).
+  const renderRoomSummary = () => {
+    if (roomStatsList && roomStatsList.length > 0) {
+      const heading = document.createElement('h3');
+      heading.textContent = 'This room';
+      dashboardDetail.appendChild(heading);
+
+      const top = roomStatsList[0];
+      const topShare =
+        roomStatsTotal > 0
+          ? Math.round((top.keystrokes / roomStatsTotal) * 100)
+          : 0;
+      const firstActive = Math.min(...roomStatsList.map((s) => Date.parse(s.firstActive)));
+      const lastActive = Math.max(...roomStatsList.map((s) => Date.parse(s.lastActive)));
+
+      const dl = document.createElement('dl');
+      dl.className = 'dashboard-stats';
+      appendStatRow(dl, 'Total keystrokes', roomStatsTotal.toLocaleString());
+      appendStatRow(dl, 'Contributors', roomStatsList.length.toLocaleString());
+      appendStatRow(dl, 'Most active', `${top.username} (${topShare}%)`);
+      appendStatRow(dl, 'First activity', new Date(firstActive).toLocaleString());
+      appendStatRow(dl, 'Latest activity', new Date(lastActive).toLocaleString());
+      dashboardDetail.appendChild(dl);
+
+      // Counts everyone who ever typed in this room, not just who's here now.
+      const note = document.createElement('p');
+      note.className = 'dashboard-detail-note';
+      note.textContent = 'Covers all activity ever recorded in this room, including people who have left.';
+      dashboardDetail.appendChild(note);
+    }
+
+    const empty = document.createElement('p');
+    empty.className = 'dashboard-detail-empty';
+    empty.textContent = 'Select a user to see details.';
+    dashboardDetail.appendChild(empty);
+  };
+
   const renderDashboardDetail = () => {
     dashboardDetail.innerHTML = '';
     if (selectedClientId === null) {
-      const empty = document.createElement('p');
-      empty.className = 'dashboard-detail-empty';
-      empty.textContent = 'Select a user to see details.';
-      dashboardDetail.appendChild(empty);
+      renderRoomSummary();
       return;
     }
     const user = getConnectedUsers(awareness).get(selectedClientId);
@@ -689,6 +732,7 @@ async function setupHostFlow(
     // Reset to the loading state so a reopened modal doesn't flash stats
     // from the previous visit, then fetch fresh numbers.
     roomStats = null;
+    roomStatsList = null;
     statsError = null;
     void loadDashboardStats();
     renderDashboardUsers();
