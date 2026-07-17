@@ -619,8 +619,9 @@ app.get('/api/rooms/:id/host/stats', requireHost, async (req: HostRequest, res) 
         clientId: row.client_id,
         username: row.username,
         keystrokes: row.keystrokes,
-        firstActive: row.first_active.toISOString(),
-        lastActive: row.last_active.toISOString(),
+        // Already UTC ISO strings from the query (see getRoomActivityStats).
+        firstActive: row.first_active,
+        lastActive: row.last_active,
       })),
     });
   } catch (error) {

@@ -665,6 +665,18 @@ async function setupHostFlow(
       renderDashboardDetail();
       return;
     }
+
+    // Back to the room overview (the no-selection summary).
+    const back = document.createElement('button');
+    back.className = 'dashboard-back';
+    back.textContent = '← Room overview';
+    back.addEventListener('click', () => {
+      selectedClientId = null;
+      renderDashboardUsers(); // clears the selected-row highlight
+      renderDashboardDetail();
+    });
+    dashboardDetail.appendChild(back);
+
     const heading = document.createElement('h3');
     const dot = document.createElement('span');
     dot.className = 'user-dot';

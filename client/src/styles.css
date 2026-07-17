@@ -532,6 +532,21 @@ body {
   font-size: 11px;
 }
 
+.dashboard-back {
+  display: block;
+  margin-bottom: 14px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: #6cb6ff;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.dashboard-back:hover {
+  text-decoration: underline;
+}
+
 .dashboard-kick {
   margin-top: 20px;
   padding: 8px 14px;

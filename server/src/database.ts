@@ -55,9 +55,15 @@ export interface RoomUserStats {
   client_id: string | null;
   username: string;
   keystrokes: number;
-  first_active: Date;
-  last_active: Date;
+  // UTC ISO strings. recorded_at is `timestamp without time zone` holding a
+  // UTC wall clock; formatting it here with a literal Z (rather than letting
+  // node-postgres build a Date in the server's local zone) keeps the instant
+  // correct so the browser can localize it.
+  first_active: string;
+  last_active: string;
 }
+
+const UTC_ISO_FORMAT = `'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'`;
 
 export async function getRoomActivityStats(
   roomId: string
@@ -66,8 +72,8 @@ export async function getRoomActivityStats(
     `SELECT client_id,
             (ARRAY_AGG(username ORDER BY recorded_at DESC))[1] AS username,
             SUM(keystroke_count)::int AS keystrokes,
-            MIN(recorded_at) AS first_active,
-            MAX(recorded_at) AS last_active
+            to_char(MIN(recorded_at), ${UTC_ISO_FORMAT}) AS first_active,
+            to_char(MAX(recorded_at), ${UTC_ISO_FORMAT}) AS last_active
        FROM activity_logs
       WHERE room_id = $1
       GROUP BY COALESCE(client_id, username), client_id
