@@ -157,6 +157,28 @@ body {
   font-size: 12px;
 }
 
+.about-github-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  color: #808080;
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.about-github-link:hover {
+  color: #d4d4d4;
+}
+
+.about-github-link svg {
+  opacity: 0.7;
+}
+
+.about-github-link:hover svg {
+  opacity: 1;
+}
+
 #about-btn {
   padding: 4px 12px;
   background: transparent;
