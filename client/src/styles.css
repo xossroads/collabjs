@@ -150,31 +150,32 @@ body {
 #footer {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 6px 20px;
   background: #252526;
   border-top: 1px solid #3c3c3c;
   font-size: 12px;
 }
 
-#github-link {
-  display: flex;
+.about-github-link {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
+  margin-top: 4px;
   color: #808080;
   text-decoration: none;
   transition: color 0.2s;
 }
 
-#github-link:hover {
+.about-github-link:hover {
   color: #d4d4d4;
 }
 
-#github-link svg {
+.about-github-link svg {
   opacity: 0.7;
 }
 
-#github-link:hover svg {
+.about-github-link:hover svg {
   opacity: 1;
 }
 
@@ -348,6 +349,229 @@ body {
   border-radius: 8px;
   border: 1px solid #3c3c3c;
   min-width: 300px;
+  max-width: 420px;
+}
+
+.modal-content.dashboard {
+  width: 720px;
+  max-width: 90vw;
+  padding: 0;
+  overflow: hidden;
+}
+
+.dashboard-layout {
+  display: flex;
+  min-height: 420px;
+}
+
+.dashboard-sidebar {
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  padding: 20px;
+  border-right: 1px solid #3c3c3c;
+  background: #1f1f20;
+}
+
+.dashboard-sidebar h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+}
+
+.dashboard-section {
+  flex: 1;
+  margin-bottom: 16px;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.dashboard-section h3 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #9d9d9d;
+}
+
+.dashboard-user-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.dashboard-user-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  color: #d4d4d4;
+  user-select: none;
+}
+
+.dashboard-user-list li:hover {
+  background: #2d2d2e;
+}
+
+.dashboard-user-list li.selected {
+  background: #094771;
+  color: #ffffff;
+}
+
+.dashboard-user-list .user-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.dashboard-user-list .user-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dashboard-user-list .empty-state {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: #707070;
+  font-style: italic;
+  cursor: default;
+}
+
+.dashboard-user-list .empty-state:hover {
+  background: transparent;
+}
+
+.dashboard-actions {
+  gap: 8px;
+}
+
+.dashboard-detail {
+  flex: 1;
+  padding: 24px;
+  overflow-y: auto;
+}
+
+.dashboard-detail h3 {
+  margin: 0 0 12px;
+  font-size: 15px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dashboard-detail .user-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+
+.dashboard-detail-empty {
+  margin: 0;
+  color: #9d9d9d;
+  font-size: 13px;
+  font-style: italic;
+}
+
+.dashboard-detail-error {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: #1e1e1e;
+  border: 1px dashed #5a1d1d;
+  border-radius: 6px;
+  color: #f48771;
+  font-size: 12px;
+}
+
+.dashboard-stats {
+  margin: 16px 0 0;
+}
+
+.dashboard-stats .stat-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  padding: 7px 0;
+  border-bottom: 1px solid #2a2a2b;
+  font-size: 13px;
+}
+
+.dashboard-stats dt {
+  color: #9d9d9d;
+}
+
+.dashboard-stats dd {
+  margin: 0;
+  color: #d4d4d4;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-share-bar {
+  margin-top: 14px;
+  height: 6px;
+  background: #2d2d2e;
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.stat-share-fill {
+  height: 100%;
+  background: #0e639c;
+  border-radius: 3px;
+}
+
+.dashboard-detail-note {
+  margin-top: 8px;
+  color: #707070;
+  font-size: 11px;
+}
+
+.dashboard-back {
+  display: inline-block;
+  margin-bottom: 10px;
+  padding: 0;
+  background: none;
+  border: none;
+  color: #9d9d9d;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.dashboard-back:hover {
+  color: #d4d4d4;
+}
+
+.dashboard-kick {
+  margin-top: 20px;
+  padding: 8px 14px;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 13px;
+  background: #a1322c;
+  color: white;
+}
+
+.dashboard-kick:hover:not(:disabled) {
+  background: #b53b34;
+}
+
+.dashboard-kick:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+#kicked-new-room {
+  background: #0e639c;
+  color: white;
 }
 
 .modal-content h2 {
@@ -377,6 +601,11 @@ body {
   justify-content: flex-end;
 }
 
+#host-menu-modal .modal-buttons {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 .modal-buttons button {
   padding: 8px 16px;
   border: none;
@@ -385,14 +614,80 @@ body {
   font-size: 14px;
 }
 
-#random-name-btn {
+#random-name-btn,
+#host-claim-skip,
+#host-login-cancel {
   background: #3c3c3c;
   color: #d4d4d4;
 }
 
-#save-name-btn {
+#save-name-btn,
+#host-claim-submit,
+#host-login-submit {
   background: #0e639c;
   color: white;
+}
+
+#host-menu-logout,
+#host-menu-logout-all,
+#host-menu-close,
+#host-nuke-cancel,
+#host-logout-all-cancel,
+#host-logout-all-confirm {
+  background: #3c3c3c;
+  color: #d4d4d4;
+}
+
+.modal-buttons button.danger {
+  background: #a1322c;
+  color: white;
+}
+
+.modal-buttons button.danger:hover {
+  background: #b53b34;
+}
+
+#host-btn {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid #3c3c3c;
+  border-radius: 4px;
+  color: #d4d4d4;
+  cursor: pointer;
+  font-size: 13px;
+}
+
+#host-btn:hover {
+  background: #3c3c3c;
+}
+
+/* Authed-as-host state: subtle gold accent so it's visually distinct from
+   the "log in" state without being garish. */
+#host-btn.is-host {
+  border-color: #c9a227;
+  color: #f5d76e;
+}
+
+#host-btn.hidden {
+  display: none;
+}
+
+.modal-content p {
+  font-size: 13px;
+  color: #a0a0a0;
+  line-height: 1.4;
+  margin-bottom: 16px;
+}
+
+.modal-error {
+  font-size: 13px;
+  color: #f48771;
+  margin-bottom: 12px;
+  min-height: 1em;
+}
+
+.modal-error.hidden {
+  display: none;
 }
 
 .modal-buttons button:hover {

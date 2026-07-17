@@ -33,11 +33,17 @@ export interface EditorConfig {
   container: HTMLElement;
   roomId: string;
   username: string;
+  // localStorage UUID, broadcast via awareness so the host dashboard can
+  // match this user to their activity stats across renames.
+  clientId: string;
   wsUrl: string;
   initialTheme: Extension;
   onFocus: () => void;
   onBlur: () => void;
   onKeystroke: () => void;
+  // Optional: receive Hocuspocus stateless messages broadcast from the
+  // server. Used by the host flow for room-level events like "room-nuked".
+  onStateless?: (payload: string) => void;
 }
 
 export interface CollabEditor {
@@ -51,7 +57,7 @@ export interface CollabEditor {
 }
 
 export function createEditor(config: EditorConfig): CollabEditor {
-  const { container, roomId, username, wsUrl, initialTheme, onFocus, onBlur, onKeystroke } = config;
+  const { container, roomId, username, clientId, wsUrl, initialTheme, onFocus, onBlur, onKeystroke, onStateless } = config;
 
   // Theme compartment for dynamic theme switching
   const themeCompartment = new Compartment();
@@ -68,6 +74,9 @@ export function createEditor(config: EditorConfig): CollabEditor {
     name: roomId,
     document: ydoc,
     awareness: awareness,
+    onStateless: onStateless
+      ? ({ payload }) => onStateless(payload)
+      : undefined,
   });
 
   const ytext = ydoc.getText('codemirror');
@@ -77,6 +86,7 @@ export function createEditor(config: EditorConfig): CollabEditor {
   awareness.setLocalStateField('user', {
     name: username,
     color: color,
+    clientId: clientId,
   });
 
   // Track keystrokes extension
@@ -150,6 +160,7 @@ export function createEditor(config: EditorConfig): CollabEditor {
     awareness.setLocalStateField('user', {
       name: newUsername,
       color: newColor,
+      clientId: clientId,
     });
   };
 

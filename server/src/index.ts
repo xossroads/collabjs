@@ -5,9 +5,25 @@ import cors from 'cors';
 import rateLimit from 'express-rate-limit';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { getDocument, saveDocument, logActivity, upsertUser, testConnection } from './database.js';
+import { randomUUID } from 'crypto';
+import type { Request, Response, NextFunction } from 'express';
+import {
+  getDocument,
+  saveDocument,
+  logActivity,
+  upsertUser,
+  testConnection,
+  getRoomHost,
+  tryClaimRoomHost,
+  createHostSession,
+  getHostSession,
+  revokeAllHostSessions,
+  deleteRoom,
+  getRoomActivityStats,
+} from './database.js';
 import { startCleanupJob } from './cleanup.js';
 import { getClientIp, requestLogger, sanitizeForLog } from './logging.js';
+import { hashPassword, verifyPassword, generateToken, hashToken } from './password.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -38,6 +54,45 @@ const MAX_WS_PER_IP = (() => {
 })();
 const wsConnectionsByIp = new Map<string, number>();
 
+// Kick bans, keyed "roomId:clientId" → expiry epoch ms. In-memory (single
+// process) and best-effort: clientId is the client's localStorage UUID, so
+// clearing localStorage evades the ban. Entries are lazily purged on lookup.
+const KICK_BAN_MS = 10 * 60 * 1000;
+const kickBans = new Map<string, number>();
+
+// socketId → clientId for live WS connections, so the kick endpoint can find
+// a user's sockets. Kept ourselves because Hocuspocus's onConnect context
+// merge races connection setup (the Connection can capture the pre-merge
+// context object), which made Connection.context unreliable for this.
+// Populated in the `connected` hook (established connections only, so every
+// entry gets a matching onDisconnect cleanup).
+const wsClientIdBySocket = new Map<string, string>();
+
+function clientIdFromParams(requestParameters: URLSearchParams): string | null {
+  const raw = requestParameters.get('clientId');
+  return isUuid(raw) ? raw : null;
+}
+
+function isKickBanned(roomId: string, clientId: string): boolean {
+  const key = `${roomId}:${clientId}`;
+  const expiry = kickBans.get(key);
+  if (expiry === undefined) return false;
+  if (Date.now() >= expiry) {
+    kickBans.delete(key);
+    return false;
+  }
+  return true;
+}
+
+// Rooms currently being deleted by a host. The fetch/store hooks and onConnect
+// short-circuit for any room in this set so that:
+//   - Hocuspocus's final save during unloadDocument doesn't re-create the
+//     documents row we're about to delete (or just deleted).
+//   - A reconnecting client can't start a fresh session against the doomed
+//     room mid-nuke.
+// Entries live for the duration of the DELETE /api/rooms/:id handler.
+const roomsBeingNuked = new Set<string>();
+
 // Test database connection on startup
 testConnection().then(available => {
   dbAvailable = available;
@@ -62,6 +117,7 @@ const hocuspocus = Server.configure({
     new Database({
       fetch: async ({ documentName }) => {
         if (!dbAvailable) return null;
+        if (roomsBeingNuked.has(documentName)) return null;
         try {
           const data = await getDocument(documentName);
           return data ? new Uint8Array(data) : null;
@@ -71,6 +127,10 @@ const hocuspocus = Server.configure({
       },
       store: async ({ documentName, state }) => {
         if (!dbAvailable) return;
+        // Skip the save during a nuke so we don't immediately undo the
+        // delete. unloadDocument fires this hook one last time on the way
+        // out, and we want that no-op while we're tearing the room down.
+        if (roomsBeingNuked.has(documentName)) return;
         try {
           await saveDocument(documentName, Buffer.from(state));
         } catch (error) {
@@ -80,7 +140,7 @@ const hocuspocus = Server.configure({
     }),
   ],
 
-  async onConnect({ documentName, request, requestHeaders, socketId }) {
+  async onConnect({ documentName, request, requestHeaders, requestParameters, socketId }) {
     const ip = getClientIp(request, requestHeaders);
 
     // Reject malformed document names. Throwing rejects the connection.
@@ -89,6 +149,28 @@ const hocuspocus = Server.configure({
         `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
       );
       throw new Error('Invalid document name');
+    }
+
+    // Reject if the room is being nuked. Otherwise a reconnecting client
+    // could hold the doc in memory while we're deleting it.
+    if (roomsBeingNuked.has(documentName)) {
+      throw new Error('Room is being deleted');
+    }
+
+    // The client identifies itself with its localStorage UUID as a query
+    // param on the WS URL. Missing/malformed just means this connection
+    // can't be targeted by a kick — old clients keep working.
+    //
+    // Note this ban check is only a fast-path socket close: the provider
+    // sends an Auth message first, and Hocuspocus establishes that path
+    // concurrently with onConnect, so a throw here can lose the race. The
+    // authoritative, race-free rejection is in onAuthenticate below.
+    const clientId = clientIdFromParams(requestParameters);
+    if (clientId && isKickBanned(documentName, clientId)) {
+      console.warn(
+        `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId} ip=${sanitizeForLog(ip)}`
+      );
+      throw new Error('Kicked');
     }
 
     // Enforce per-IP connection cap. Count is incremented here and decremented
@@ -107,8 +189,32 @@ const hocuspocus = Server.configure({
     );
   },
 
+  // The provider always sends an Auth message (empty token) right after the
+  // socket opens, and this hook runs sequentially in that path — a throw
+  // here reliably prevents the connection from ever being established (no
+  // awareness applied, nothing broadcast). This is where the kick ban is
+  // actually enforced.
+  async onAuthenticate({ documentName, requestParameters }) {
+    const clientId = clientIdFromParams(requestParameters);
+    if (clientId && isKickBanned(documentName, clientId)) {
+      console.warn(
+        `WS reject (kicked, auth) room=${sanitizeForLog(documentName)} clientId=${clientId}`
+      );
+      throw new Error('Kicked');
+    }
+  },
+
+  // Fires only for fully established connections — the reliable place to
+  // record socketId → clientId (rejected attempts never land here, so the
+  // map can't leak entries that onDisconnect won't clean up).
+  async connected({ requestParameters, socketId }) {
+    const clientId = clientIdFromParams(requestParameters);
+    if (clientId) wsClientIdBySocket.set(socketId, clientId);
+  },
+
   async onDisconnect({ documentName, requestHeaders, socketId, clientsCount }) {
     const ip = getClientIp(undefined, requestHeaders);
+    wsClientIdBySocket.delete(socketId);
 
     const current = wsConnectionsByIp.get(ip) ?? 0;
     if (current <= 1) {
@@ -231,13 +337,14 @@ if (isProduction) {
 
 // Activity logging endpoint
 app.post('/api/activity', async (req, res) => {
-  const { roomId, username, keystrokeCount, inEditor } = req.body ?? {};
+  const { roomId, username, keystrokeCount, inEditor, clientId } = req.body ?? {};
 
   if (
     !isRoomId(roomId) ||
     !isString(username, MAX_USERNAME_LEN) ||
     !isCount(keystrokeCount) ||
-    typeof inEditor !== 'boolean'
+    typeof inEditor !== 'boolean' ||
+    !isUuid(clientId)
   ) {
     return res.status(400).json({ error: 'Invalid request body' });
   }
@@ -247,7 +354,7 @@ app.post('/api/activity', async (req, res) => {
   }
 
   try {
-    await logActivity(roomId, username, keystrokeCount, inEditor);
+    await logActivity(roomId, username, keystrokeCount, inEditor, clientId);
     res.json({ success: true, persisted: true });
   } catch (error) {
     console.error('Error logging activity:', error);
@@ -283,6 +390,336 @@ app.get('/api/health', (req, res) => {
     database: dbAvailable,
     environment: NODE_ENV,
   });
+});
+
+// --- Per-room host -----------------------------------------------------
+//
+// One host per room, set by whoever claims it first with a password. After
+// claim, accessing the host role on this room requires the password.
+
+const PASSWORD_MIN_LEN = 8;
+// scrypt's standard limit for the password buffer is generous, but we cap at
+// 72 to match common bcrypt-era expectations and to bound abuse.
+const PASSWORD_MAX_LEN = 72;
+const HOST_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
+
+// Precomputed dummy hash for the host-login path. When a room has no host
+// yet, we still want to spend the same time the verify path would, so an
+// attacker can't tell "no host yet" from "host set, wrong password" by
+// timing. Computed once at startup.
+const DUMMY_HASH_PROMISE = hashPassword('!unclaimed-room-placeholder!');
+
+// Push a "host-state-changed" stateless message to every client connected
+// to the room. The client's onStateless handler re-fetches host status and
+// updates the UI live, instead of staying out of sync until the next reload.
+// Silently no-ops if no doc is loaded (nobody's connected to push to).
+function broadcastHostStateChanged(roomId: string): void {
+  const doc = hocuspocus.documents.get(roomId);
+  if (!doc) return;
+  doc.broadcastStateless(JSON.stringify({ type: 'host-state-changed' }));
+}
+
+function isValidRoomIdParam(v: string | undefined): v is string {
+  return typeof v === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(v);
+}
+
+function isValidPassword(v: unknown): v is string {
+  return (
+    typeof v === 'string' &&
+    v.length >= PASSWORD_MIN_LEN &&
+    v.length <= PASSWORD_MAX_LEN
+  );
+}
+
+// GET host status — public, but accepts an optional Bearer token. Returns
+// whether the room has been claimed and (if a token is supplied) whether it
+// authenticates the caller as the current host. The client uses this to
+// reconcile localStorage state with reality on page load: a token that's
+// been revoked elsewhere (newer login, logout-everywhere, nuked room) flips
+// the UI back to the unauthenticated state instead of pretending we're
+// still the host.
+app.get('/api/rooms/:id/host', async (req, res) => {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  if (!dbAvailable) {
+    return res.json({ claimed: false, available: false, authed: false });
+  }
+  try {
+    const row = await getRoomHost(roomId);
+
+    let authed = false;
+    const auth = req.headers.authorization;
+    if (row && auth?.startsWith('Bearer ') && auth.length >= 8) {
+      const session = await getHostSession(hashToken(auth.slice(7)));
+      authed = !!session && session.room_id === roomId;
+    }
+
+    res.json({ claimed: !!row, available: true, authed });
+  } catch (error) {
+    console.error('host status lookup failed:', error);
+    res.status(500).json({ error: 'Lookup failed' });
+  }
+});
+
+// Claim host for a room. Atomic: only the first concurrent caller wins.
+app.post('/api/rooms/:id/claim', async (req, res) => {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  const { password } = req.body ?? {};
+  if (!isValidPassword(password)) {
+    return res.status(400).json({
+      error: `Password must be ${PASSWORD_MIN_LEN}-${PASSWORD_MAX_LEN} characters`,
+    });
+  }
+  if (!dbAvailable) {
+    return res.status(503).json({ error: 'Host feature unavailable' });
+  }
+
+  try {
+    const passwordHash = await hashPassword(password);
+    const won = await tryClaimRoomHost(roomId, passwordHash);
+    if (!won) {
+      return res.status(409).json({ error: 'Room already has a host' });
+    }
+
+    // Single-session policy: a fresh claim mints exactly one valid session.
+    // (No prior sessions can exist for this brand-new claim, but the revoke
+    // is harmless and keeps the claim/login paths symmetric.)
+    await revokeAllHostSessions(roomId);
+
+    const { plaintext, hash } = generateToken();
+    const expiresAt = new Date(Date.now() + HOST_SESSION_TTL_MS);
+    await createHostSession(hash, roomId, expiresAt);
+
+    broadcastHostStateChanged(roomId);
+    res.status(201).json({ token: plaintext, expiresAt: expiresAt.toISOString() });
+  } catch (error) {
+    console.error('host claim failed:', error);
+    res.status(500).json({ error: 'Claim failed' });
+  }
+});
+
+// Authenticate as the room's existing host.
+app.post('/api/rooms/:id/host-login', async (req, res) => {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    return res.status(400).json({ error: 'Invalid room id' });
+  }
+  const { password } = req.body ?? {};
+  if (typeof password !== 'string') {
+    return res.status(400).json({ error: 'Password required' });
+  }
+  if (!dbAvailable) {
+    return res.status(503).json({ error: 'Host feature unavailable' });
+  }
+
+  try {
+    const row = await getRoomHost(roomId);
+    // Always run exactly one verify so timing doesn't leak whether the room
+    // has been claimed. The dummy hash is precomputed so we don't pay extra
+    // scrypt time on the unclaimed branch.
+    const encodedToCompare = row ? row.password_hash : await DUMMY_HASH_PROMISE;
+    const ok = await verifyPassword(password, encodedToCompare);
+    if (!row || !ok) {
+      return res.status(401).json({ error: 'Invalid credentials' });
+    }
+
+    // Single-session policy: a successful login revokes every other session
+    // for this room. Latest login wins; older tabs/devices get 401 the next
+    // time they try to do anything.
+    await revokeAllHostSessions(roomId);
+
+    const { plaintext, hash } = generateToken();
+    const expiresAt = new Date(Date.now() + HOST_SESSION_TTL_MS);
+    await createHostSession(hash, roomId, expiresAt);
+
+    broadcastHostStateChanged(roomId);
+    res.json({ token: plaintext, expiresAt: expiresAt.toISOString() });
+  } catch (error) {
+    console.error('host login failed:', error);
+    res.status(500).json({ error: 'Login failed' });
+  }
+});
+
+// Auth middleware: validates the Bearer token, looks up the session, and
+// confirms the session is for the same room as the URL parameter. Attaches
+// the room id to the request as a typed property; downstream handlers can
+// trust that req.hostRoomId === req.params.id when they run.
+interface HostRequest extends Request {
+  hostRoomId?: string;
+}
+
+async function requireHost(
+  req: HostRequest,
+  res: Response,
+  next: NextFunction
+): Promise<void> {
+  const roomId = req.params.id;
+  if (!isValidRoomIdParam(roomId)) {
+    res.status(400).json({ error: 'Invalid room id' });
+    return;
+  }
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ') || auth.length < 8) {
+    res.status(401).json({ error: 'Auth required' });
+    return;
+  }
+  const token = auth.slice(7);
+  if (!dbAvailable) {
+    res.status(503).json({ error: 'Host feature unavailable' });
+    return;
+  }
+  try {
+    const session = await getHostSession(hashToken(token));
+    if (!session) {
+      res.status(401).json({ error: 'Invalid or expired token' });
+      return;
+    }
+    if (session.room_id !== roomId) {
+      res.status(403).json({ error: 'Token does not match this room' });
+      return;
+    }
+    req.hostRoomId = session.room_id;
+    next();
+  } catch (error) {
+    console.error('host auth check failed:', error);
+    res.status(500).json({ error: 'Auth check failed' });
+  }
+}
+
+// Revoke every host session for the room — including the caller's. Used to
+// implement "Log out everywhere" so a host can boot suspected stale sessions
+// without changing the password. The room itself stays intact.
+app.post('/api/rooms/:id/host/logout-all', requireHost, async (req: HostRequest, res) => {
+  const roomId = req.hostRoomId!;
+  try {
+    const revoked = await revokeAllHostSessions(roomId);
+    broadcastHostStateChanged(roomId);
+    console.log(`HOST logout-all room=${sanitizeForLog(roomId)} revoked=${revoked}`);
+    res.status(204).end();
+  } catch (error) {
+    console.error('host logout-all failed:', error);
+    res.status(500).json({ error: 'Logout failed' });
+  }
+});
+
+// Per-user activity stats for the dashboard detail pane. Aggregated from
+// activity_logs by username — timestamps come back as ISO strings so the
+// client doesn't have to guess the wire format of a pg Date.
+app.get('/api/rooms/:id/host/stats', requireHost, async (req: HostRequest, res) => {
+  const roomId = req.hostRoomId!;
+  try {
+    const rows = await getRoomActivityStats(roomId);
+    res.json({
+      stats: rows.map((row) => ({
+        clientId: row.client_id,
+        username: row.username,
+        keystrokes: row.keystrokes,
+        // Already UTC ISO strings from the query (see getRoomActivityStats).
+        firstActive: row.first_active,
+        lastActive: row.last_active,
+      })),
+    });
+  } catch (error) {
+    console.error('host stats failed:', error);
+    res.status(500).json({ error: 'Stats unavailable' });
+  }
+});
+
+// Kick a user: ban their clientId for KICK_BAN_MS, tell their connections
+// they were kicked (so the client tears down instead of auto-reconnecting),
+// then close those sockets. Best-effort — see the kickBans comment.
+app.post('/api/rooms/:id/host/kick', requireHost, async (req: HostRequest, res) => {
+  const roomId = req.hostRoomId!;
+  const { clientId } = req.body ?? {};
+  if (!isUuid(clientId)) {
+    return res.status(400).json({ error: 'Invalid request body' });
+  }
+
+  try {
+    // Ban first so a reconnect racing the close is already rejected.
+    kickBans.set(`${roomId}:${clientId}`, Date.now() + KICK_BAN_MS);
+
+    const doc = hocuspocus.documents.get(roomId);
+    const targets = doc
+      ? doc.getConnections().filter((c) => wsClientIdBySocket.get(c.socketId) === clientId)
+      : [];
+    for (const conn of targets) {
+      conn.sendStateless(JSON.stringify({ type: 'kicked' }));
+    }
+    if (targets.length > 0) {
+      // Give the WS buffer a moment to flush before closing, same as nuke.
+      await new Promise((r) => setTimeout(r, 100));
+      for (const conn of targets) {
+        conn.close();
+      }
+    }
+
+    console.log(
+      `HOST kick room=${sanitizeForLog(roomId)} clientId=${clientId} connections=${targets.length}`
+    );
+    res.json({ kicked: targets.length });
+  } catch (error) {
+    console.error('kick failed:', error);
+    res.status(500).json({ error: 'Kick failed' });
+  }
+});
+
+// Nuke the room. Wipes Y.js state, activity logs, the host record (which
+// cascade-clears all session tokens), and force-disconnects every connected
+// client. The roomsBeingNuked guard keeps a reconnecting client or the
+// final unloadDocument save from re-creating rows we're deleting.
+//
+// Before kicking connections, we broadcast a stateless "nuked" message so
+// any other open tabs in the room can reload and drop their local Y.Doc
+// state. Without this, those tabs auto-reconnect after closeConnections and
+// re-sync their *previous* doc content into the empty server doc — the
+// nuke would visually un-do itself.
+app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
+  const roomId = req.hostRoomId!;
+  // Server picks the successor room ID so every connected tab — destroyer
+  // included — can be told the same destination, keeping the group together
+  // in a fresh room. Both delivery paths (broadcast + HTTP response) carry
+  // the same value, so the destroyer can navigate even if it misses its
+  // own broadcast.
+  const nextRoomId = randomUUID();
+  roomsBeingNuked.add(roomId);
+  try {
+    // 1. Tell every connected client where to go next. They'll redirect,
+    //    dropping their local Y.Doc, so the deleted server-side state
+    //    can't be re-populated by their reconnect.
+    const doc = hocuspocus.documents.get(roomId);
+    if (doc) {
+      doc.broadcastStateless(
+        JSON.stringify({ type: 'room-nuked', nextRoomId })
+      );
+      // Give the WS buffer a moment to flush before we slam connections shut.
+      await new Promise((r) => setTimeout(r, 100));
+    }
+
+    // 2. Drop in-memory state and force-disconnect anyone still attached.
+    hocuspocus.closeConnections(roomId);
+    if (doc) {
+      await hocuspocus.unloadDocument(doc);
+    }
+
+    // 3. Wipe DB rows transactionally.
+    await deleteRoom(roomId);
+
+    console.log(
+      `HOST nuke room=${sanitizeForLog(roomId)} next=${sanitizeForLog(nextRoomId)}`
+    );
+    res.status(200).json({ nextRoomId });
+  } catch (error) {
+    console.error('nuke failed:', error);
+    res.status(500).json({ error: 'Nuke failed' });
+  } finally {
+    roomsBeingNuked.delete(roomId);
+  }
 });
 
 // Serve index.html for all other routes (SPA fallback) in production

@@ -3,6 +3,7 @@ export interface ActivityLog {
   username: string;
   keystrokeCount: number;
   inEditor: boolean;
+  clientId: string;
   recordedAt?: Date;
 }
 

@@ -6,7 +6,7 @@ dist/
 docs
 .env.example
 CLAUDE.md
-
+.claude
 # Belt-and-suspenders: client/tsconfig has noEmit, but if anyone ever flips
 # it, don't let stray compiled output drift back into the repo next to the .ts
 client/src/*.js

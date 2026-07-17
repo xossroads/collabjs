@@ -16,13 +16,19 @@ const FALLBACK_COLOR = 'hsl(0, 0%, 50%)';
 // hex colors. Anything else falls back to a neutral grey.
 const COLOR_RE = /^(?:hsl\(\d{1,3},\s*\d{1,3}%,\s*\d{1,3}%\)|#[0-9a-fA-F]{3,8})$/;
 
+// The localStorage UUID a peer broadcasts so the host dashboard can match
+// them to their activity stats. Anything that isn't UUID-shaped becomes null
+// (the dashboard falls back to matching by name).
+const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export interface SafeUser {
   name: string;
   color: string;
+  clientId: string | null;
 }
 
 export function sanitizeRemoteUser(value: unknown): SafeUser {
-  const raw = (value ?? {}) as { name?: unknown; color?: unknown };
+  const raw = (value ?? {}) as { name?: unknown; color?: unknown; clientId?: unknown };
 
   const name =
     typeof raw.name === 'string' && raw.name.length > 0
@@ -34,5 +40,10 @@ export function sanitizeRemoteUser(value: unknown): SafeUser {
       ? raw.color
       : FALLBACK_COLOR;
 
-  return { name, color };
+  const clientId =
+    typeof raw.clientId === 'string' && CLIENT_ID_RE.test(raw.clientId)
+      ? raw.clientId
+      : null;
+
+  return { name, color, clientId };
 }
