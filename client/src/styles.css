@@ -345,19 +345,35 @@ body {
   flex-direction: row;
 }
 
-/* Fixed 300x250 rectangle. align-self:flex-end lands it on the cross-axis
-   end, and being the last flex child lands it on the main-axis end — so it
-   sits flush in the panel's bottom-right corner in both dock modes. */
+/* The ad band. It stretches across the panel's cross-axis and carries a solid
+   divider on the side facing the console (top in right dock, left in bottom
+   dock), with a slightly darker background — so it reads as its own region,
+   distinct from the scrolling output. The 300x250 unit sits flush in the
+   panel's bottom-right corner (align-items/justify-content flex-end). */
 #ad-slot {
   flex-shrink: 0;
-  align-self: flex-end;
+  align-self: stretch;
   display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 300px;
+  align-items: flex-end;
+  justify-content: flex-end;
   height: 250px;
-  background: #1a1a1a;
+  background: #181818;
+  border-top: 1px solid #3c3c3c;
+}
+
+.dock-bottom #ad-slot {
+  height: auto;
+  width: 300px;
+  border-top: none;
+  border-left: 1px solid #3c3c3c;
+}
+
+/* The reserved 300x250 footprint; dashed outline makes the space visible when
+   no ad has filled it (dev / adblock / before a slot id exists). */
+#ad-slot .adsbygoogle {
+  box-sizing: border-box;
   border: 1px dashed #3c3c3c;
+  background: #1a1a1a;
 }
 
 #clear-output {
