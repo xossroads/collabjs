@@ -64,16 +64,19 @@ function loadAdsense(): void {
   script.crossOrigin = 'anonymous';
   document.head.appendChild(script);
 
-  // Fill the reserved 300x250 slot — but only when a real ad unit id is
-  // configured (VITE_ADSENSE_SLOT). Pushing with a client but no slot makes
-  // AdSense log a console error, so with no slot we leave the loader present
-  // and the dashed placeholder box in place (no push). Either way the
-  // reserved space is unchanged, so layout never shifts.
+  // Fill the responsive slot — but only when a real ad unit id is configured
+  // (VITE_ADSENSE_SLOT). Pushing with a client but no slot makes AdSense log a
+  // console error, so with no slot we leave the loader present and the dashed
+  // placeholder box in place (no push). data-ad-format=auto +
+  // full-width-responsive lets AdSense size the unit to the slot's current
+  // width, so it adapts to the panel/browser and to either dock orientation.
   const slot = import.meta.env.VITE_ADSENSE_SLOT;
   const ins = document.querySelector<HTMLElement>('#ad-slot .adsbygoogle');
   if (!ins || !slot) return;
   ins.setAttribute('data-ad-client', client);
   ins.setAttribute('data-ad-slot', slot);
+  ins.setAttribute('data-ad-format', 'auto');
+  ins.setAttribute('data-full-width-responsive', 'true');
   try {
     ((window as unknown as { adsbygoogle: unknown[] }).adsbygoogle ??= []).push({});
   } catch {
