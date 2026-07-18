@@ -122,12 +122,12 @@ body {
 }
 
 #run-btn {
-  padding: 6px 20px;
+  padding: 6px 18px;
   background: #4caf50;
   border: none;
   border-radius: 4px;
   color: white;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 500;
   cursor: pointer;
 }
@@ -304,11 +304,11 @@ body {
 }
 
 #dock-toggle button {
-  padding: 2px 7px;
+  padding: 4px 9px;
   background: transparent;
   border: 1px solid #3c3c3c;
   color: #808080;
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1;
   cursor: pointer;
 }
@@ -381,12 +381,12 @@ body {
 }
 
 #clear-output {
-  padding: 2px 8px;
+  padding: 5px 13px;
   background: transparent;
   border: 1px solid #3c3c3c;
   border-radius: 3px;
   color: #808080;
-  font-size: 11px;
+  font-size: 13px;
   cursor: pointer;
 }
 
