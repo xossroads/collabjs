@@ -1010,6 +1010,16 @@ async function setupHostFlow(
   };
 
   // Wire events
+  // Password inputs live in <form>s (so browsers treat them as real login/
+  // signup fields); the actual submit is driven by the buttons and the keydown
+  // handlers below, so block native form submission to avoid a page reload.
+  document
+    .getElementById('host-claim-form')
+    ?.addEventListener('submit', (e) => e.preventDefault());
+  document
+    .getElementById('host-login-form')
+    ?.addEventListener('submit', (e) => e.preventDefault());
+
   claimSubmit.addEventListener('click', handleClaim);
   claimSkip.addEventListener('click', closeClaimModal);
   claimConfirm.addEventListener('keydown', (e) => {

@@ -28,7 +28,6 @@
   -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://tpc.googlesyndication.com https://ep2.adtrafficquality.google; style-src 'self' 'unsafe-inline'; img-src 'self' data: https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://ep1.adtrafficquality.google; font-src 'self'; connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:* https://pagead2.googlesyndication.com https://googleads.g.doubleclick.net https://ep1.adtrafficquality.google https://csi.gstatic.com; frame-src 'self' https://googleads.g.doubleclick.net https://tpc.googlesyndication.com https://ep2.adtrafficquality.google https://www.google.com; object-src 'none'; base-uri 'self'; form-action 'self'">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <link rel="preload" href="/collabJS.png" as="image">
   <title>CollabJS - Collaborative Code Editor</title>
   <link rel="stylesheet" href="/src/styles.css">
 </head>
@@ -93,8 +92,10 @@
     <div class="modal-content">
       <h2>Become this room's host?</h2>
       <p>You're the first one here. Set a password to take host control of this room. Anyone else joining can use the room normally — only you'll be able to take host actions.</p>
-      <input type="password" id="host-claim-password" placeholder="Password (min 8 characters)" maxlength="72" autocomplete="new-password">
-      <input type="password" id="host-claim-confirm" placeholder="Confirm password" maxlength="72" autocomplete="new-password">
+      <form id="host-claim-form">
+        <input type="password" id="host-claim-password" placeholder="Password (min 8 characters)" maxlength="72" autocomplete="new-password">
+        <input type="password" id="host-claim-confirm" placeholder="Confirm password" maxlength="72" autocomplete="new-password">
+      </form>
       <div id="host-claim-error" class="modal-error hidden"></div>
       <div class="modal-buttons">
         <button id="host-claim-skip">Skip</button>
@@ -106,7 +107,9 @@
     <div class="modal-content">
       <h2>Host login</h2>
       <p id="host-login-message">Enter the host password for this room.</p>
-      <input type="password" id="host-login-password" placeholder="Password" maxlength="72" autocomplete="current-password">
+      <form id="host-login-form">
+        <input type="password" id="host-login-password" placeholder="Password" maxlength="72" autocomplete="current-password">
+      </form>
       <div id="host-login-error" class="modal-error hidden"></div>
       <div class="modal-buttons">
         <button id="host-login-cancel">Cancel</button>
