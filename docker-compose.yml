@@ -13,7 +13,16 @@ services:
     restart: unless-stopped
 
   app:
-    build: .
+    # AdSense ids come from a root .env on the deploy host (gitignored):
+    #   VITE_ADSENSE_CLIENT=ca-pub-xxxxxxxxxxxxxxxx
+    #   VITE_ADSENSE_SLOT=xxxxxxxxxx
+    # Baked into the client bundle at build time (args) and used at runtime to
+    # generate /ads.txt (ADSENSE_CLIENT). Unset = no ads served.
+    build:
+      context: .
+      args:
+        VITE_ADSENSE_CLIENT: ${VITE_ADSENSE_CLIENT:-}
+        VITE_ADSENSE_SLOT: ${VITE_ADSENSE_SLOT:-}
     expose:
       - "3000"
       - "3001"
@@ -22,6 +31,7 @@ services:
       - PORT=3000
       - API_PORT=3001
       - NODE_ENV=production
+      - ADSENSE_CLIENT=${VITE_ADSENSE_CLIENT:-}
     depends_on:
       db:
         condition: service_healthy

@@ -15,6 +15,14 @@ RUN npm install
 # Copy source code
 COPY . .
 
+# AdSense identifiers are baked into the client bundle at build time — Vite reads
+# VITE_-prefixed vars from the environment. Supplied via compose build args (from
+# the root .env); unset means no ads are served.
+ARG VITE_ADSENSE_CLIENT=""
+ARG VITE_ADSENSE_SLOT=""
+ENV VITE_ADSENSE_CLIENT=$VITE_ADSENSE_CLIENT
+ENV VITE_ADSENSE_SLOT=$VITE_ADSENSE_SLOT
+
 # Build client and server
 RUN npm run build
 
