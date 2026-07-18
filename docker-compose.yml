@@ -13,11 +13,13 @@ services:
     restart: unless-stopped
 
   app:
-    # AdSense ids come from a root .env on the deploy host (gitignored):
-    #   VITE_ADSENSE_CLIENT=ca-pub-xxxxxxxxxxxxxxxx
-    #   VITE_ADSENSE_SLOT=xxxxxxxxxx
-    # Baked into the client bundle at build time (args) and used at runtime to
-    # generate /ads.txt (ADSENSE_CLIENT). Unset = no ads served.
+    # AdSense config comes from a root .env on the deploy host (gitignored).
+    # Two independent knobs so ads.txt can stay up while the on-page ad script
+    # is disabled (e.g. during AdSense review, when Auto ads break the layout):
+    #   ADSENSE_CLIENT=ca-pub-xxxxxxxxxxxxxxxx   -> serves /ads.txt (runtime)
+    #   VITE_ADSENSE_CLIENT=ca-pub-xxxxxxxxxxxxxxxx -> loads adsbygoogle.js (build)
+    #   VITE_ADSENSE_SLOT=xxxxxxxxxx             -> the ad unit to fill (build)
+    # Leave the two VITE_ vars blank to serve ads.txt but load no ad script.
     build:
       context: .
       args:
@@ -31,7 +33,7 @@ services:
       - PORT=3000
       - API_PORT=3001
       - NODE_ENV=production
-      - ADSENSE_CLIENT=${VITE_ADSENSE_CLIENT:-}
+      - ADSENSE_CLIENT=${ADSENSE_CLIENT:-}
     depends_on:
       db:
         condition: service_healthy
