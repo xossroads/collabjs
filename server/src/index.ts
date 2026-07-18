@@ -329,10 +329,26 @@ function isCount(v: unknown): v is number {
   );
 }
 
+// HTML responses carry `no-transform` so Cloudflare's edge won't inject
+// scripts into them. Its analytics beacon and bot-detection (jsd) scripts
+// break inside the opaque-origin sandbox iframe (cross-origin SecurityError)
+// and are blocked by our CSP on the app page anyway, so the injection is pure
+// noise; no-transform stops it while leaving every other Cloudflare protection
+// (WAF, Bot Fight Mode heuristics, caching) intact.
+const HTML_CACHE_CONTROL = 'no-cache, no-transform';
+
 // Serve static files in production
 if (isProduction) {
   const clientDistPath = path.join(__dirname, '../../client/dist');
-  app.use(express.static(clientDistPath));
+  app.use(
+    express.static(clientDistPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
+        }
+      },
+    })
+  );
 }
 
 // Activity logging endpoint
@@ -733,6 +749,7 @@ if (isProduction) {
       return;
     }
     const clientDistPath = path.join(__dirname, '../../client/dist');
+    res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }
