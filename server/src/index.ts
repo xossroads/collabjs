@@ -329,10 +329,26 @@ function isCount(v: unknown): v is number {
   );
 }
 
+// HTML responses carry `no-transform` so Cloudflare's edge won't inject
+// scripts into them. Its analytics beacon and bot-detection (jsd) scripts
+// break inside the opaque-origin sandbox iframe (cross-origin SecurityError)
+// and are blocked by our CSP on the app page anyway, so the injection is pure
+// noise; no-transform stops it while leaving every other Cloudflare protection
+// (WAF, Bot Fight Mode heuristics, caching) intact.
+const HTML_CACHE_CONTROL = 'no-cache, no-transform';
+
 // Serve static files in production
 if (isProduction) {
   const clientDistPath = path.join(__dirname, '../../client/dist');
-  app.use(express.static(clientDistPath));
+  app.use(
+    express.static(clientDistPath, {
+      setHeaders: (res, filePath) => {
+        if (filePath.endsWith('.html')) {
+          res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
+        }
+      },
+    })
+  );
 }
 
 // Activity logging endpoint
@@ -390,6 +406,19 @@ app.get('/api/health', (req, res) => {
     database: dbAvailable,
     environment: NODE_ENV,
   });
+});
+
+// AdSense ads.txt, generated from the publisher id (ADSENSE_CLIENT, e.g.
+// ca-pub-1234…). Google requires this at the site root before it serves ads;
+// generating it keeps the id out of the repo (and out of forks). 404s when
+// unconfigured, like any other unknown path.
+app.get('/ads.txt', (_req, res) => {
+  const match = process.env.ADSENSE_CLIENT?.match(/^ca-(pub-\d+)$/);
+  if (!match) {
+    res.status(404).type('txt').send('Not Found');
+    return;
+  }
+  res.type('txt').send(`google.com, ${match[1]}, DIRECT, f08c47fec0942fa0\n`);
 });
 
 // --- Per-room host -----------------------------------------------------
@@ -722,10 +751,18 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
   }
 });
 
-// Serve index.html for all other routes (SPA fallback) in production
+// SPA fallback in production: serve index.html only for real client routes
+// ("/" and "/room/:id"). Everything else (bot scans, junk paths) gets a 404
+// instead of a 200 that masquerades as the app.
 if (isProduction) {
+  const spaRoute = /^\/(room\/[a-zA-Z0-9-]+)?$/;
   app.get('*', (req, res) => {
+    if (!spaRoute.test(req.path)) {
+      res.status(404).type('txt').send('Not Found');
+      return;
+    }
     const clientDistPath = path.join(__dirname, '../../client/dist');
+    res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }

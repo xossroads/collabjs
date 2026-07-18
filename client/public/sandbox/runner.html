@@ -30,6 +30,29 @@ const stringify = (value) => {
   return String(value);
 };
 
+// Format a thrown value the way the console panel expects. Errors from user
+// code (run via `new Function`) carry <anonymous> stack frames, from which we
+// recover the user-facing line number — syntax vs runtime sit at a different
+// wrapper offset.
+const formatError = (err) => {
+  if (!(err instanceof Error)) return String(err);
+  let msg = `${err.name}: ${err.message}`;
+  const lineMatch = err.stack?.match(/<anonymous>:(\d+):/);
+  if (lineMatch) {
+    const offset = err instanceof SyntaxError ? 1 : 2;
+    const line = parseInt(lineMatch[1], 10) - offset;
+    if (line > 0) msg += ` (line ${line})`;
+  }
+  return msg;
+};
+
+// True only for errors originating in user code. `new Function` makes user
+// code's stack frames read <anonymous>; anything without that frame was
+// injected into this document by the edge/CDN or a browser extension (e.g.
+// Cloudflare's RUM beacon, which throws a cross-origin SecurityError inside
+// our opaque-origin sandbox) and must not be reported as the user's error.
+const isUserError = (err) => err instanceof Error && !!err.stack?.includes('<anonymous>');
+
 const send = (msg) => parent.postMessage(msg, '*');
 
 const captured = (kind) => (...args) =>
@@ -55,29 +78,21 @@ window.addEventListener('message', (e) => {
     }
     send({ kind: 'done' });
   } catch (err) {
-    let msg;
-    if (err instanceof Error) {
-      msg = `${err.name}: ${err.message}`;
-      const lineMatch = err.stack?.match(/<anonymous>:(\d+):/);
-      if (lineMatch) {
-        const offset = err instanceof SyntaxError ? 1 : 2;
-        const line = parseInt(lineMatch[1], 10) - offset;
-        if (line > 0) msg += ` (line ${line})`;
-      }
-    } else {
-      msg = String(err);
-    }
-    send({ kind: 'error', content: msg });
+    send({ kind: 'error', content: formatError(err) });
     send({ kind: 'done' });
   }
 });
 
 window.addEventListener('error', (e) => {
-  send({ kind: 'error', content: `UncaughtError: ${e.message}` });
+  if (!isUserError(e.error)) return;
+  send({ kind: 'error', content: `UncaughtError: ${formatError(e.error)}` });
 });
 
 window.addEventListener('unhandledrejection', (e) => {
   const reason = e.reason;
+  // Drop Error rejections that carry no user-code frame (injected scripts);
+  // non-Error reasons (strings, etc.) can only come from user code here.
+  if (reason instanceof Error && !isUserError(reason)) return;
   const content = reason?.message ?? String(reason);
   send({ kind: 'error', content: `UnhandledRejection: ${content}` });
 });
