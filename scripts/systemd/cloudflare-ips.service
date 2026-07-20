@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh Cloudflare IP ranges for the collabjs nginx origin lock
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+Environment=COLLABJS_DIR=/opt/collabjs
+ExecStart=/opt/collabjs/scripts/update-cloudflare-ips.sh
