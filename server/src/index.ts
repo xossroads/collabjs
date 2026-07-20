@@ -337,6 +337,12 @@ function isCount(v: unknown): v is number {
 // (WAF, Bot Fight Mode heuristics, caching) intact.
 const HTML_CACHE_CONTROL = 'no-cache, no-transform';
 
+// Vite emits content-hashed filenames under /assets (e.g. index-BXQfXKcJ.js),
+// so those are immutable — cache them for a year at the edge and in the browser.
+// This turns Cloudflare from REVALIDATED (an origin round-trip per request) into
+// a plain edge HIT, and repeat visits skip the request entirely.
+const ASSET_CACHE_CONTROL = 'public, max-age=31536000, immutable';
+
 // Serve static files in production
 if (isProduction) {
   const clientDistPath = path.join(__dirname, '../../client/dist');
@@ -345,6 +351,8 @@ if (isProduction) {
       setHeaders: (res, filePath) => {
         if (filePath.endsWith('.html')) {
           res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
+        } else if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+          res.setHeader('Cache-Control', ASSET_CACHE_CONTROL);
         }
       },
     })
