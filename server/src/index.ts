@@ -408,19 +408,6 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// AdSense ads.txt, generated from the publisher id (ADSENSE_CLIENT, e.g.
-// ca-pub-1234…). Google requires this at the site root before it serves ads;
-// generating it keeps the id out of the repo (and out of forks). 404s when
-// unconfigured, like any other unknown path.
-app.get('/ads.txt', (_req, res) => {
-  const match = process.env.ADSENSE_CLIENT?.match(/^ca-(pub-\d+)$/);
-  if (!match) {
-    res.status(404).type('txt').send('Not Found');
-    return;
-  }
-  res.type('txt').send(`google.com, ${match[1]}, DIRECT, f08c47fec0942fa0\n`);
-});
-
 // --- Per-room host -----------------------------------------------------
 //
 // One host per room, set by whoever claims it first with a password. After
