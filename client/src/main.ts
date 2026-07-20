@@ -51,39 +51,6 @@ function getRoomId(): string {
   return newRoomId;
 }
 
-// Inject the AdSense loader only when a publisher id is configured
-// (VITE_ADSENSE_CLIENT in client/.env, gitignored — baked in at build time).
-// Keeps the id out of the repo and means forks/dev machines without the var
-// simply serve no ads. The CSP in index.html already allowlists the ad hosts.
-function loadAdsense(): void {
-  const client = import.meta.env.VITE_ADSENSE_CLIENT;
-  if (!client || !/^ca-pub-\d+$/.test(client)) return;
-  const script = document.createElement('script');
-  script.async = true;
-  script.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
-  script.crossOrigin = 'anonymous';
-  document.head.appendChild(script);
-
-  // Fill the responsive slot — but only when a real ad unit id is configured
-  // (VITE_ADSENSE_SLOT). Pushing with a client but no slot makes AdSense log a
-  // console error, so with no slot we leave the loader present and the dashed
-  // placeholder box in place (no push). data-ad-format=auto +
-  // full-width-responsive lets AdSense size the unit to the slot's current
-  // width, so it adapts to the panel/browser and to either dock orientation.
-  const slot = import.meta.env.VITE_ADSENSE_SLOT;
-  const ins = document.querySelector<HTMLElement>('#ad-slot .adsbygoogle');
-  if (!ins || !slot) return;
-  ins.setAttribute('data-ad-client', client);
-  ins.setAttribute('data-ad-slot', slot);
-  ins.setAttribute('data-ad-format', 'auto');
-  ins.setAttribute('data-full-width-responsive', 'true');
-  try {
-    ((window as unknown as { adsbygoogle: unknown[] }).adsbygoogle ??= []).push({});
-  } catch {
-    // adsbygoogle not ready / blocked — placeholder box remains.
-  }
-}
-
 // Initialize app
 async function init() {
   const roomId = getRoomId();
@@ -1154,5 +1121,4 @@ async function setupHostFlow(
 }
 
 // Start the app
-loadAdsense();
 init().catch(console.error);
