@@ -746,19 +746,20 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
   }
 });
 
-// SPA fallback in production: serve index.html only for real client routes
-// ("/" and "/room/:id"). Everything else (bot scans, junk paths) gets a 404
-// instead of a 200 that masquerades as the app.
+// Production routing. "/" is served by express.static above as the landing
+// (index.html). "/room/:id" has no matching file, so serve the editor shell
+// (app.html) here. Everything else (bot scans, junk paths) gets a 404 instead
+// of a 200 that masquerades as the app.
 if (isProduction) {
-  const spaRoute = /^\/(room\/[a-zA-Z0-9-]+)?$/;
+  const roomRoute = /^\/room\/[a-zA-Z0-9-]+$/;
   app.get('*', (req, res) => {
-    if (!spaRoute.test(req.path)) {
+    if (!roomRoute.test(req.path)) {
       res.status(404).type('txt').send('Not Found');
       return;
     }
     const clientDistPath = path.join(__dirname, '../../client/dist');
     res.setHeader('Cache-Control', HTML_CACHE_CONTROL);
-    res.sendFile(path.join(clientDistPath, 'index.html'));
+    res.sendFile(path.join(clientDistPath, 'app.html'));
   });
 }
 

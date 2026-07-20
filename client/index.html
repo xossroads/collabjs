@@ -4,217 +4,43 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <!--
-    Strict CSP for the parent page. The sandbox iframe loads /sandbox/runner.html
-    which is a separate document with its own (absent) CSP, so the `new Function`
-    we need to run user code is scoped there and not blocked here.
-
-    style-src needs 'unsafe-inline' because CodeMirror injects <style> elements
-    and inline style="" attributes at runtime — there is no nonce/hash path for
-    that without forking CodeMirror. Inline-style XSS is far less dangerous
-    than inline-script XSS, so this is an acceptable trade.
-
-    connect-src allows ws:/wss: globally to keep the same policy working in dev
-    (Vite HMR + Hocuspocus on a different port) and prod (Hocuspocus over wss).
-    Tighten to specific hosts at deploy time if you want stricter exfil control.
+    Landing page CSP. Unlike the app, the landing loads no editor, sandbox, or
+    WebSocket — so no ws:/frame-src, and styles are external (no 'unsafe-inline').
   -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
-  <title>CollabJS - Collaborative Code Editor</title>
-  <link rel="stylesheet" href="/src/styles.css">
+  <meta name="description" content="CollabJS — a real-time collaborative JavaScript editor. Share a link and code together, instantly.">
+  <title>CollabJS — Collaborative JavaScript Editor</title>
+  <link rel="stylesheet" href="/src/landing.css">
 </head>
 <body>
-  <div id="app">
-    <header id="header">
-      <h1>CollabJS</h1>
-      <div id="user-info">
-        <span id="username-display"></span>
-        <button id="change-username">Change Name</button>
-      </div>
-      <div id="room-info">
-        Room: <span id="room-id"></span>
-      </div>
-      <div id="theme-picker">
-        <label for="theme-select">Theme:</label>
-        <select id="theme-select"></select>
-      </div>
-      <div id="connected-users"></div>
-      <button id="host-btn" class="hidden" title="Host login">🔒 Host</button>
+  <div class="grid-bg" aria-hidden="true"></div>
+  <div class="glow" aria-hidden="true"></div>
+
+  <main class="stage">
+    <header class="wordmark reveal s0">
+      <span class="wordmark-collab">Collab</span><span class="wordmark-js">JS</span>
     </header>
-    <div id="main-container">
-      <div id="editor-container"></div>
-      <div id="resize-handle">
-        <div class="resize-grip"></div>
+
+    <section class="window" aria-label="CollabJS">
+      <div class="window-bar reveal s1">
+        <span class="dot dot-r"></span><span class="dot dot-y"></span><span class="dot dot-g"></span>
+        <span class="window-title">collab — main.js</span>
       </div>
-      <div id="output-panel">
-        <div id="output-header">
-          <span>Console Output</span>
-          <div id="output-header-actions">
-            <div id="dock-toggle" role="group" aria-label="Output panel position">
-              <button id="dock-bottom" title="Dock panel to the bottom" aria-label="Dock panel to the bottom">⬓</button>
-              <button id="dock-right" title="Dock panel to the right" aria-label="Dock panel to the right">◨</button>
-            </div>
-            <button id="clear-output">Clear</button>
-            <button id="run-btn">Run</button>
-          </div>
-        </div>
-        <div id="output-body">
-          <div id="output-content"></div>
-        </div>
-      </div>
-    </div>
-    <footer id="footer">
-      <button id="about-btn">About</button>
+      <div class="code"><code><span class="line reveal s2"><span class="ln">1</span><span class="cm">// real-time collaborative JavaScript —</span></span><span class="line reveal s3"><span class="ln">2</span><span class="cm">// share a link, code together, live.</span></span><span class="line reveal s4"><span class="ln">3</span></span><span class="line reveal s5"><span class="ln">4</span><span class="kw">const</span> <span class="vr">room</span> <span class="op">=</span> <span class="kw">await</span> <span class="vr">collab</span><span class="op">.</span><span class="fn">start</span><span class="op">()</span></span><span class="line reveal s6"><span class="ln">5</span><span class="caret"></span></span></code></div>
+    </section>
+
+    <a id="start" class="cta reveal s7" href="/">
+      <span class="cta-run">&#9654;</span> Start coding
+    </a>
+
+    <footer class="foot reveal s8">
+      <span>open source · MIT</span>
+      <span class="sep">/</span>
+      <a href="https://github.com/xossroads/collabjs" target="_blank" rel="noopener">GitHub</a>
     </footer>
-  </div>
-  <div id="username-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>Set Your Username</h2>
-      <input type="text" id="username-input" placeholder="Enter username..." maxlength="20">
-      <div class="modal-buttons">
-        <button id="random-name-btn">Random Name</button>
-        <button id="save-name-btn">Save</button>
-      </div>
-    </div>
-  </div>
-  <div id="host-claim-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>Become this room's host?</h2>
-      <p>You're the first one here. Set a password to take host control of this room. Anyone else joining can use the room normally — only you'll be able to take host actions.</p>
-      <form id="host-claim-form">
-        <input type="password" id="host-claim-password" placeholder="Password (min 8 characters)" maxlength="72" autocomplete="new-password">
-        <input type="password" id="host-claim-confirm" placeholder="Confirm password" maxlength="72" autocomplete="new-password">
-      </form>
-      <div id="host-claim-error" class="modal-error hidden"></div>
-      <div class="modal-buttons">
-        <button id="host-claim-skip">Skip</button>
-        <button id="host-claim-submit">Set password</button>
-      </div>
-    </div>
-  </div>
-  <div id="host-login-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>Host login</h2>
-      <p id="host-login-message">Enter the host password for this room.</p>
-      <form id="host-login-form">
-        <input type="password" id="host-login-password" placeholder="Password" maxlength="72" autocomplete="current-password">
-      </form>
-      <div id="host-login-error" class="modal-error hidden"></div>
-      <div class="modal-buttons">
-        <button id="host-login-cancel">Cancel</button>
-        <button id="host-login-submit">Log in</button>
-      </div>
-    </div>
-  </div>
-  <div id="host-menu-modal" class="modal hidden">
-    <div class="modal-content dashboard">
-      <div class="dashboard-layout">
-        <aside class="dashboard-sidebar">
-          <h2>🎛️ Host dashboard</h2>
-          <div class="dashboard-section">
-            <h3>In this room</h3>
-            <ul id="host-dashboard-users" class="dashboard-user-list"></ul>
-          </div>
-          <div class="modal-buttons dashboard-actions">
-            <button id="host-menu-logout">Log out</button>
-            <button id="host-menu-logout-all">Log out everywhere…</button>
-            <button id="host-menu-nuke" class="danger">Destroy room…</button>
-            <button id="host-menu-close">Close</button>
-          </div>
-        </aside>
-        <section class="dashboard-detail" id="host-dashboard-detail">
-          <p class="dashboard-detail-empty">Select a user to see details.</p>
-        </section>
-      </div>
-    </div>
-  </div>
-  <div id="kicked-overlay" class="modal hidden">
-    <div class="modal-content">
-      <h2>Removed from room</h2>
-      <p>The host removed you from this room. You can start a fresh room of your own below.</p>
-      <div class="modal-buttons">
-        <button id="kicked-new-room">Start your own room</button>
-      </div>
-    </div>
-  </div>
-  <div id="host-logout-all-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>Log out every host session?</h2>
-      <p>Revokes every active host session for this room, including this one. Anyone authenticated as the host on another device or tab will need to log in again. The room and its password are untouched.</p>
-      <div id="host-logout-all-error" class="modal-error hidden"></div>
-      <div class="modal-buttons">
-        <button id="host-logout-all-cancel">Cancel</button>
-        <button id="host-logout-all-confirm">Yes, log everyone out</button>
-      </div>
-    </div>
-  </div>
-  <div id="host-nuke-modal" class="modal hidden">
-    <div class="modal-content">
-      <h2>⚠️ Destroy this room?</h2>
-      <p>This permanently deletes the document, all activity logs, and the host record. Everyone currently in the room, including you, will be moved together to a new empty room with a fresh URL. The old room link will no longer work. This cannot be undone.</p>
-      <div id="host-nuke-error" class="modal-error hidden"></div>
-      <div class="modal-buttons">
-        <button id="host-nuke-cancel">Cancel</button>
-        <button id="host-nuke-confirm" class="danger">Destroy it!</button>
-      </div>
-    </div>
-  </div>
-  <div id="about-modal" class="modal hidden">
-    <div class="modal-content about-content">
-      <h2>About CollabJS</h2>
-      <div class="about-scroll">
-        <p>CollabJS is a real-time collaborative JavaScript code editor built for technical interviews, pair programming, and live coding sessions. Multiple users can write and edit code simultaneously in the same document with zero conflicts.</p>
+  </main>
 
-        <h3>How It Works</h3>
-        <ul>
-          <li><strong>Share the URL</strong> - Send your room link to collaborators. Anyone with the link can join instantly.</li>
-          <li><strong>Code together</strong> - All changes sync in real-time. See other users' cursors and selections as they type.</li>
-          <li><strong>Run and share results</strong> - Execute JavaScript code and everyone sees the console output together.</li>
-        </ul>
-
-        <h3>Features</h3>
-        <ul>
-          <li><strong>Conflict-free editing</strong> - Built on CRDT technology, so simultaneous edits never clash</li>
-          <li><strong>Live cursors</strong> - See exactly where others are typing and selecting</li>
-          <li><strong>Shared console</strong> - Run code and view output together in real-time</li>
-          <li><strong>Syntax validation</strong> - Catch syntax errors before running with accurate line numbers</li>
-          <li><strong>Multiple themes</strong> - Choose from various editor color schemes</li>
-          <li><strong>Persistent sessions</strong> - Code is saved automatically; rejoin anytime with the same URL</li>
-          <li><strong>Room host</strong> - Optionally claim a room with a password to view activity and manage participants</li>
-        </ul>
-
-        <h3>Use Cases</h3>
-        <ul>
-          <li><strong>Technical interviews</strong> - Watch candidates code in real-time</li>
-          <li><strong>Pair programming</strong> - Collaborate with teammates remotely</li>
-          <li><strong>Teaching</strong> - Demonstrate code to students who can follow along</li>
-          <li><strong>Code reviews</strong> - Walk through code changes together live</li>
-        </ul>
-
-        <h3>Keyboard Shortcuts</h3>
-        <ul>
-          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Enter</kbd> - Run code</li>
-          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Z</kbd> - Undo</li>
-          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>Shift</kbd> + <kbd>Z</kbd> - Redo</li>
-          <li><kbd>Ctrl</kbd>/<kbd>Cmd</kbd> + <kbd>F</kbd> - Find in editor</li>
-        </ul>
-
-        <h3>Built With</h3>
-        <p>Y.js (CRDT), Hocuspocus, CodeMirror 6, TypeScript, Vite, Acorn</p>
-
-        <h3>Open Source</h3>
-        <p>CollabJS is free and open source software released under the MIT License. You are free to use, modify, and distribute this software. Contributions are welcome!</p>
-        <a href="https://github.com/xossroads/collabjs" target="_blank" rel="noopener" class="about-github-link">
-          <svg height="16" width="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-            <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/>
-          </svg>
-          View on GitHub
-        </a>
-      </div>
-      <div class="modal-buttons">
-        <button id="close-about-btn">Close</button>
-      </div>
-    </div>
-  </div>
-  <script type="module" src="/src/main.ts"></script>
+  <script type="module" src="/src/landing.ts"></script>
 </body>
 </html>
