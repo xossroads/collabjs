@@ -1,0 +1,7 @@
+# collabjs — allow the landing page, keep crawlers out of the app.
+# Rooms are ephemeral UUID paths; the sandbox and API aren't content.
+User-agent: *
+Disallow: /room/
+Disallow: /sandbox/
+Disallow: /api/
+Disallow: /app.html
