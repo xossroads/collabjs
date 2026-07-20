@@ -1,0 +1,209 @@
+/* CollabJS landing — editor-themed, all-monospace, VS Code Dark+ palette. */
+
+:root {
+  --bg:      #1e1e1e;
+  --panel:   #252526;
+  --bar:     #323233;
+  --border:  #3c3c3c;
+  --text:    #d4d4d4;
+  --muted:   #808080;
+  --gutter:  #6e7681;
+  --blue:    #569cd6;  /* keywords          */
+  --varblue: #9cdcfe;  /* identifiers       */
+  --green:   #6a9955;  /* comments          */
+  --yellow:  #dcdcaa;  /* function names    */
+  --run:     #4caf50;  /* Run-button green  */
+  --run-hi:  #59c95d;
+  --js:      #f7df1e;  /* JavaScript yellow */
+  --font: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body { height: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  position: relative;
+}
+
+/* --- atmosphere ------------------------------------------------------- */
+.grid-bg {
+  position: fixed;
+  inset: -2px;
+  background-image:
+    linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: radial-gradient(circle at 50% 42%, #000 0%, transparent 78%);
+  pointer-events: none;
+}
+.glow {
+  position: fixed;
+  left: 50%;
+  top: 42%;
+  width: 780px;
+  height: 520px;
+  transform: translate(-50%, -50%);
+  background:
+    radial-gradient(closest-side, rgba(86,156,214,.16), transparent 70%),
+    radial-gradient(closest-side, rgba(76,175,80,.10), transparent 72%);
+  filter: blur(20px);
+  pointer-events: none;
+}
+
+/* --- stage / staggered entrance -------------------------------------- */
+.stage {
+  position: relative;
+  z-index: 1;
+  width: min(92vw, 560px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 24px 0 8px;
+}
+/* Staggered entrance. Index lives in a class (not an inline style) so the tight
+   style-src 'self' CSP on the landing has nothing to block. */
+.reveal {
+  opacity: 0;
+  transform: translateY(10px);
+  animation: rise .6s cubic-bezier(.22,.61,.36,1) forwards;
+  animation-delay: calc(var(--i) * 70ms + 80ms);
+}
+.s0 { --i: 0; } .s1 { --i: 1; } .s2 { --i: 2; } .s3 { --i: 3; } .s4 { --i: 4; }
+.s5 { --i: 5; } .s6 { --i: 6; } .s7 { --i: 7; } .s8 { --i: 8; }
+@keyframes rise { to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .reveal { animation-duration: .01ms; animation-delay: 0ms; }
+  .caret { animation: none; }
+}
+
+/* --- wordmark -------------------------------------------------------- */
+.wordmark {
+  font-size: clamp(2.6rem, 9vw, 4.2rem);
+  font-weight: 700;
+  letter-spacing: -.04em;
+  margin-bottom: 26px;
+  line-height: 1;
+  user-select: none;
+}
+.wordmark-collab { color: #e8e8e8; }
+.wordmark-js {
+  color: var(--js);
+  text-shadow: 0 0 26px rgba(247,223,30,.35);
+}
+
+/* --- editor window --------------------------------------------------- */
+.window {
+  width: 100%;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,.03) inset,
+    0 24px 60px -20px rgba(0,0,0,.7),
+    0 8px 20px -12px rgba(0,0,0,.6);
+}
+
+.window-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 14px;
+  background: var(--bar);
+  border-bottom: 1px solid var(--border);
+}
+.dot { width: 11px; height: 11px; border-radius: 50%; display: inline-block; }
+.dot-r { background: #ff5f56; }
+.dot-y { background: #ffbd2e; }
+.dot-g { background: #27c93f; }
+.window-title {
+  margin-left: 8px;
+  font-size: 12.5px;
+  color: var(--muted);
+  letter-spacing: .01em;
+}
+
+.code {
+  margin: 0;
+  padding: 22px 20px 24px;
+  font-size: clamp(13px, 2.6vw, 15px);
+  line-height: 1.95;
+  tab-size: 2;
+  overflow-x: auto;
+}
+.code code { display: block; }
+.line { display: block; white-space: pre; }
+.ln {
+  display: inline-block;
+  width: 2.2ch;
+  margin-right: 1.4ch;
+  text-align: right;
+  color: var(--gutter);
+  user-select: none;
+}
+.cm { color: var(--green); font-style: italic; }
+.kw { color: var(--blue); }
+.vr { color: var(--varblue); }
+.fn { color: var(--yellow); }
+.op { color: var(--text); }
+
+.caret {
+  display: inline-block;
+  width: .55ch;
+  height: 1.05em;
+  margin-left: .1ch;
+  vertical-align: -.16em;
+  background: var(--text);
+  animation: blink 1.05s step-end infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+
+/* --- CTA ------------------------------------------------------------- */
+.cta {
+  margin-top: 30px;
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 26px;
+  font: 600 15px/1 var(--font);
+  letter-spacing: .01em;
+  color: #0c1a0c;
+  text-decoration: none;
+  background: var(--run);
+  border: 1px solid rgba(255,255,255,.12);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: transform .16s ease, background .16s ease, box-shadow .16s ease;
+  box-shadow: 0 10px 26px -12px rgba(76,175,80,.7);
+}
+.cta:hover {
+  background: var(--run-hi);
+  transform: translateY(-2px);
+  box-shadow: 0 16px 34px -12px rgba(76,175,80,.85);
+}
+.cta:active { transform: translateY(0); }
+.cta:focus-visible { outline: 2px solid var(--js); outline-offset: 3px; }
+.cta-run { font-size: 11px; transform: translateY(.5px); }
+
+/* --- footer ---------------------------------------------------------- */
+.foot {
+  margin-top: 26px;
+  font-size: 12.5px;
+  color: var(--muted);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.foot a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; transition: color .15s, border-color .15s; }
+.foot a:hover { color: var(--varblue); border-bottom-color: var(--varblue); }

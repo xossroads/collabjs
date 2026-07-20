@@ -1,0 +1,19 @@
+# Local preview of the production container stack over plain HTTP.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+#   open http://localhost:8080
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+#
+# Opt-in ONLY (explicit -f). The prod deploy runs `docker compose up -d --build`
+# and must never pick this up — that's why it is not named
+# docker-compose.override.yml (which Compose would auto-merge).
+#
+# It swaps nginx's TLS + Cloudflare-locked config for a plain-HTTP reverse proxy,
+# so the app is reachable from localhost without prod certs or the CF allowlist.
+# app/db build and run exactly as in prod (NODE_ENV=production, built client).
+services:
+  nginx:
+    volumes: !override
+      - ./nginx.dev.conf:/etc/nginx/conf.d/default.conf:ro
+    ports: !override
+      - "8080:80"

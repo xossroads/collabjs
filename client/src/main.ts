@@ -462,13 +462,16 @@ async function setupHostFlow(
   };
   const closeLoginModal = () => loginModal.classList.add('hidden');
 
-  // Two button states:
-  //   "🔒 Host"  (default class)  → click opens login modal
-  //   "🎛️ Host"  (.is-host)       → click opens host menu (log out, nuke, …)
-  // hidden class wins over both: we hide entirely when the room has no
-  // host yet (the claim modal is the affordance there).
-  const setButtonState = (state: 'hidden' | 'login' | 'authed') => {
-    hostBtn.classList.remove('hidden', 'is-host');
+  // Button states:
+  //   "👑 Become host" (.is-claim) → click (re)opens the claim modal
+  //   "🔒 Host"        (default)   → click opens login modal
+  //   "🎛️ Host"        (.is-host)  → click opens host menu (log out, nuke, …)
+  // hidden wins over all: used only when the host feature is unavailable.
+  // buttonMode is tracked so the click handler knows which modal to open.
+  let buttonMode: 'hidden' | 'claim' | 'login' | 'authed' = 'hidden';
+  const setButtonState = (state: 'hidden' | 'claim' | 'login' | 'authed') => {
+    buttonMode = state;
+    hostBtn.classList.remove('hidden', 'is-host', 'is-claim');
     if (state === 'hidden') {
       hostBtn.classList.add('hidden');
       return;
@@ -477,6 +480,10 @@ async function setupHostFlow(
       hostBtn.classList.add('is-host');
       hostBtn.textContent = '🎛️ Host';
       hostBtn.title = 'Open host menu';
+    } else if (state === 'claim') {
+      hostBtn.classList.add('is-claim');
+      hostBtn.textContent = '👑 Become host';
+      hostBtn.title = 'Claim this room as host';
     } else {
       hostBtn.textContent = '🔒 Host';
       hostBtn.title = 'Host login';
@@ -830,7 +837,9 @@ async function setupHostFlow(
   const closeLogoutAllModal = () => logoutAllModal.classList.add('hidden');
 
   const handleHostButtonClick = () => {
-    if (getStoredHostToken(roomId)) {
+    if (buttonMode === 'claim') {
+      openClaimModal();
+    } else if (getStoredHostToken(roomId)) {
       openMenuModal();
     } else {
       openLoginModal();
@@ -1072,7 +1081,9 @@ async function setupHostFlow(
     }
 
     if (!status.claimed) {
-      setButtonState('hidden');
+      // Show the "👑 Become host" button so the claim modal stays reachable
+      // after a skip (its click reopens it).
+      setButtonState('claim');
       // Auto-open the claim modal only on the very first load — we don't
       // want to silently spring it on someone if the room just got nuked
       // out from under them by another tab.
