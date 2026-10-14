@@ -20,6 +20,8 @@
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' ws: wss: http://localhost:* http://127.0.0.1:*; frame-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <title>CollabJS - Collaborative Code Editor</title>
+  <!-- Sets light/dark before first paint; external because the CSP forbids inline scripts. -->
+  <script src="/mode.js"></script>
   <link rel="stylesheet" href="/src/styles.css">
 </head>
 <body>
@@ -63,6 +65,7 @@
       </div>
     </div>
     <footer id="footer">
+      <button id="mode-toggle" type="button"></button>
       <button id="about-btn">About</button>
     </footer>
   </div>
@@ -167,19 +170,20 @@
         <h3>How It Works</h3>
         <ul>
           <li><strong>Share the URL</strong> - Send your room link to collaborators. Anyone with the link can join instantly.</li>
-          <li><strong>Code together</strong> - All changes sync in real-time. See other users' cursors and selections as they type.</li>
+          <li><strong>Code together</strong> - All changes sync in real-time. See other users' cursors, selections, and mouse pointers as they work.</li>
           <li><strong>Run and share results</strong> - Execute JavaScript code and everyone sees the console output together.</li>
         </ul>
 
         <h3>Features</h3>
         <ul>
           <li><strong>Conflict-free editing</strong> - Built on CRDT technology, so simultaneous edits never clash</li>
-          <li><strong>Live cursors</strong> - See exactly where others are typing and selecting</li>
-          <li><strong>Shared console</strong> - Run code and view output together in real-time</li>
+          <li><strong>Live cursors</strong> - See exactly where others are typing and selecting, each in their own color</li>
+          <li><strong>Shared console</strong> - Run code and view output together in real-time; dock it to the right or bottom and resize it</li>
+          <li><strong>Sandboxed execution</strong> - Code runs in an isolated sandbox that can't touch the page, your data, or your session</li>
           <li><strong>Syntax validation</strong> - Catch syntax errors before running with accurate line numbers</li>
-          <li><strong>Multiple themes</strong> - Choose from various editor color schemes</li>
-          <li><strong>Persistent sessions</strong> - Code is saved automatically; rejoin anytime with the same URL</li>
-          <li><strong>Room host</strong> - Optionally claim a room with a password to view activity and manage participants</li>
+          <li><strong>Light and dark mode</strong> - Switch from the footer, with around 40 editor themes to match</li>
+          <li><strong>Persistent sessions</strong> - Code is saved automatically; rejoin with the same URL. Rooms left untouched for 30 days are deleted</li>
+          <li><strong>Room host</strong> - Optionally claim a room with a password to see each participant's activity, remove someone from the room, or wipe it and move everyone to a fresh one</li>
         </ul>
 
         <h3>Use Cases</h3>

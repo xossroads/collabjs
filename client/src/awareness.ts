@@ -1,5 +1,5 @@
 import type { Awareness } from 'y-protocols/awareness';
-import { shouldUseDarkText } from './username';
+import { readableTextOn } from './colors';
 import { sanitizeRemoteUser, SafeUser } from './sanitize';
 
 export type UserState = SafeUser;
@@ -28,7 +28,7 @@ export function renderConnectedUsers(
     const badge = document.createElement('span');
     badge.className = 'user-badge';
     badge.style.backgroundColor = user.color;
-    badge.style.color = shouldUseDarkText(user.color) ? '#1e1e1e' : '#ffffff';
+    badge.style.color = readableTextOn(user.color);
     badge.textContent = user.name;
     container.appendChild(badge);
   });

@@ -10,6 +10,17 @@ interface SyntaxErrorInfo {
   message: string;
 }
 
+// Bounds on the shared log. Every entry lives in the room's Y.Doc, so it is
+// synced to every peer and persisted with the document; an unbounded
+// `for (…) console.log(i)` would freeze every collaborator's tab and bloat
+// the stored room forever.
+const MAX_ENTRIES = 1000;          // kept in the shared array (oldest trimmed)
+const MAX_LINES_PER_RUN = 1000;    // further output from one run is dropped
+const MAX_CONTENT_LENGTH = 10_000; // per entry, in characters
+// Sandbox output arrives as one postMessage per line; collect it for this
+// long and write it in a single Y.js transaction.
+const FLUSH_DELAY_MS = 50;
+
 export interface LogEntry {
   type: LogType;
   content: string;
@@ -23,6 +34,10 @@ export class SharedConsole {
   private container: HTMLElement;
   private getUsername: () => string;
   private sandbox: Sandbox;
+  private pending: LogEntry[] = [];
+  private flushTimer: number | null = null;
+  private renderFrame: number | null = null;
+  private linesThisRun = 0;
 
   constructor(ydoc: Y.Doc, container: HTMLElement, getUsername: () => string) {
     this.ydoc = ydoc;
@@ -40,15 +55,32 @@ export class SharedConsole {
     // Render existing logs
     this.render();
 
-    // Listen for changes from other users
+    // Listen for changes from any user (including our own flushes). Renders
+    // are coalesced to one per animation frame.
     this.yarray.observe(() => {
-      this.render();
+      this.scheduleRender();
     });
   }
 
   private handleSandboxMessage(msg: SandboxMessage): void {
+    if (this.linesThisRun > MAX_LINES_PER_RUN) return;
+    this.linesThisRun++;
+
     const username = this.getUsername();
-    const content = msg.kind === 'result' ? `← ${msg.content}` : msg.content;
+    if (this.linesThisRun > MAX_LINES_PER_RUN) {
+      this.addLog({
+        type: 'system',
+        content: `… output truncated after ${MAX_LINES_PER_RUN} lines`,
+        username,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    let content = msg.kind === 'result' ? `← ${msg.content}` : msg.content;
+    if (content.length > MAX_CONTENT_LENGTH) {
+      content = `${content.slice(0, MAX_CONTENT_LENGTH)}… (truncated)`;
+    }
     this.addLog({
       type: msg.kind,
       content,
@@ -113,18 +145,49 @@ export class SharedConsole {
     });
 
     // Hand off to the sandboxed iframe runner. Logs and errors stream back via
-    // postMessage and are appended to the Y.js array as they arrive.
+    // postMessage and are batched into the Y.js array.
+    this.linesThisRun = 0;
     this.sandbox.execute(code);
   }
 
   private addLog(entry: LogEntry): void {
-    this.yarray.push([entry]);
+    this.pending.push(entry);
+    if (this.flushTimer === null) {
+      this.flushTimer = window.setTimeout(() => this.flush(), FLUSH_DELAY_MS);
+    }
+  }
+
+  // Write buffered entries in one transaction (one sync message, one observe
+  // event) and trim the oldest so the shared log stays bounded.
+  private flush(): void {
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
+    if (this.pending.length === 0) return;
+    const entries = this.pending;
+    this.pending = [];
+    this.ydoc.transact(() => {
+      this.yarray.push(entries);
+      const overflow = this.yarray.length - MAX_ENTRIES;
+      if (overflow > 0) this.yarray.delete(0, overflow);
+    });
+  }
+
+  private scheduleRender(): void {
+    if (this.renderFrame !== null) return;
+    this.renderFrame = requestAnimationFrame(() => {
+      this.renderFrame = null;
+      this.render();
+    });
   }
 
   private render(): void {
     this.container.innerHTML = '';
 
-    const logs = this.yarray.toArray();
+    // Peers trim on write, but a misbehaving one might not; never draw more
+    // than the cap.
+    const logs = this.yarray.toArray().slice(-MAX_ENTRIES);
     logs.forEach((entry) => {
       const line = document.createElement('div');
       line.className = `output-line ${entry.type}`;
@@ -148,6 +211,13 @@ export class SharedConsole {
   }
 
   clear(): void {
+    // Drop anything still buffered too, so it doesn't reappear after the
+    // clear.
+    this.pending = [];
+    if (this.flushTimer !== null) {
+      clearTimeout(this.flushTimer);
+      this.flushTimer = null;
+    }
     // Clear the shared array (all users will see this)
     this.ydoc.transact(() => {
       this.yarray.delete(0, this.yarray.length);
@@ -155,6 +225,11 @@ export class SharedConsole {
   }
 
   destroy(): void {
+    this.flush();
+    if (this.renderFrame !== null) {
+      cancelAnimationFrame(this.renderFrame);
+      this.renderFrame = null;
+    }
     this.sandbox.destroy();
   }
 }

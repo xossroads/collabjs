@@ -15,11 +15,13 @@ import {
 } from './awareness';
 import type { Awareness } from 'y-protocols/awareness';
 import {
-  THEMES,
   getThemeById,
-  getDefaultTheme,
+  getThemeForMode,
+  getThemesForMode,
   saveTheme,
+  type ThemeMode,
 } from './themes';
+import { getMode, setupModeToggle } from './mode';
 import {
   fetchHostStatus,
   claimHost,
@@ -27,11 +29,13 @@ import {
   nukeRoom,
   logoutAllHostSessions,
   parseHostStatelessMessage,
+  parseRoomDeletedReason,
   getStoredHostToken,
   storeHostToken,
   clearHostToken,
   fetchRoomStats,
   kickUser,
+  ROOM_ID_RE,
   type RoomUserStats,
 } from './host';
 
@@ -40,9 +44,9 @@ import {
 // The pre-existing 8-char slice was ~32 bits and easily brute-forceable.
 function getRoomId(): string {
   const path = window.location.pathname;
-  const match = path.match(/^\/room\/([a-zA-Z0-9-]+)$/);
+  const match = path.match(/^\/room\/(.+)$/);
 
-  if (match) {
+  if (match && ROOM_ID_RE.test(match[1])) {
     return match[1];
   }
 
@@ -84,33 +88,21 @@ async function init() {
   usernameDisplay.textContent = username;
   roomIdDisplay.textContent = roomId;
 
-  // Populate theme selector
-  const darkThemes = THEMES.filter(t => t.isDark);
-  const lightThemes = THEMES.filter(t => !t.isDark);
+  // Theme selector: only the current site mode's themes are offered, so a
+  // light page never wraps a dark editor (or vice versa). Rebuilt on toggle.
+  const populateThemeSelect = (mode: ThemeMode) => {
+    themeSelect.replaceChildren(
+      ...getThemesForMode(mode).map((theme) => {
+        const option = document.createElement('option');
+        option.value = theme.id;
+        option.textContent = theme.name;
+        return option;
+      })
+    );
+  };
 
-  const darkGroup = document.createElement('optgroup');
-  darkGroup.label = 'Dark Themes';
-  darkThemes.forEach(theme => {
-    const option = document.createElement('option');
-    option.value = theme.id;
-    option.textContent = theme.name;
-    darkGroup.appendChild(option);
-  });
-
-  const lightGroup = document.createElement('optgroup');
-  lightGroup.label = 'Light Themes';
-  lightThemes.forEach(theme => {
-    const option = document.createElement('option');
-    option.value = theme.id;
-    option.textContent = theme.name;
-    lightGroup.appendChild(option);
-  });
-
-  themeSelect.appendChild(darkGroup);
-  themeSelect.appendChild(lightGroup);
-
-  // Set initial theme from localStorage
-  const initialTheme = getDefaultTheme();
+  const initialTheme = getThemeForMode(getMode());
+  populateThemeSelect(getMode());
   themeSelect.value = initialTheme.id;
 
   // Activity tracker (editor only)
@@ -133,13 +125,41 @@ async function init() {
   // arrive before then (vanishingly unlikely — page just loaded) are ignored.
   const onHostStateChangedRef: { current: (() => void) | null } = { current: null };
 
+  // Tear down so the provider doesn't keep reconnecting into the ban, then
+  // show the (non-dismissable) overlay.
+  let kicked = false;
+  const showKicked = () => {
+    kicked = true;
+    // Stop everything that writes to the room: the console (and the sandbox
+    // it may still be running code in) and mouse cursors, then the editor.
+    sharedConsole.destroy();
+    mouseCursors.destroy();
+    activityTracker.destroy();
+    editor.destroy();
+    document.getElementById('kicked-overlay')!.classList.remove('hidden');
+  };
+
+  // Reconnect after a temporary server denial: a fresh socket re-runs auth.
+  // Backoff 2s → 30s, reset once a connection authenticates.
+  const AUTH_RETRY_MIN_MS = 2000;
+  const AUTH_RETRY_MAX_MS = 30000;
+  let authRetryMs = AUTH_RETRY_MIN_MS;
+  const retryConnection = () => {
+    const delay = authRetryMs;
+    authRetryMs = Math.min(authRetryMs * 2, AUTH_RETRY_MAX_MS);
+    window.setTimeout(() => {
+      if (kicked) return;
+      editor.reconnect();
+    }, delay);
+  };
+
   let editor: CollabEditor = createEditor({
     container: editorContainer,
     roomId,
     username,
     clientId,
     wsUrl,
-    initialTheme: initialTheme.extension,
+    initialTheme,
     onFocus: () => {},
     onBlur: () => {},
     onKeystroke: () => activityTracker.recordKeystroke(),
@@ -156,33 +176,66 @@ async function init() {
         window.location.replace(`/room/${msg.nextRoomId}`);
       } else if (msg.type === 'kicked') {
         // The host removed us. Tear down before the server closes the
-        // socket so the provider doesn't auto-reconnect into the ban, then
-        // show the (non-dismissable) overlay.
-        activityTracker.destroy();
-        editor.destroy();
-        document.getElementById('kicked-overlay')!.classList.remove('hidden');
+        // socket.
+        showKicked();
       } else if (msg.type === 'host-state-changed') {
         // Claim/login/logout-all happened somewhere. Re-fetch and reconcile
         // UI live so other tabs don't keep showing stale state until reload.
         onHostStateChangedRef.current?.();
       }
     },
+    onAuthenticationFailed: (reason) => {
+      // Still inside a kick ban (e.g. reloaded after being removed). Without
+      // this the editor sat there retrying with no explanation.
+      if (reason === 'kicked') {
+        showKicked();
+        return;
+      }
+      // This room was nuked while we were away (asleep, offline, or opened
+      // from an old link). Follow the group to the room it moved to, the
+      // same way a live room-nuked message does.
+      const nextRoomId = parseRoomDeletedReason(reason);
+      if (nextRoomId) {
+        clearHostToken(roomId);
+        window.location.replace(`/room/${nextRoomId}`);
+        return;
+      }
+      // Anything else is temporary (room mid-deletion, server briefly unable
+      // to check the room). The provider never retries a denial on its own,
+      // so reconnect with backoff — otherwise edits would silently stop
+      // syncing.
+      retryConnection();
+    },
   });
 
   // Theme change handler
+  const applyTheme = (theme: typeof initialTheme) => {
+    themeSelect.value = theme.id;
+    editor.setTheme(theme);
+    mouseCursors.refresh();
+    saveTheme(theme.id);
+  };
   themeSelect.addEventListener('change', () => {
     const theme = getThemeById(themeSelect.value);
-    if (theme) {
-      editor.setTheme(theme.extension);
-      saveTheme(theme.id);
-    }
+    if (theme) applyTheme(theme);
+  });
+
+  // Site light/dark toggle (footer). The editor follows: switching modes
+  // swaps the picker to that mode's themes and brings back the one last used.
+  setupModeToggle(document.getElementById('mode-toggle') as HTMLButtonElement, (mode) => {
+    populateThemeSelect(mode);
+    applyTheme(getThemeForMode(mode));
   });
 
   // Create shared console (synced via Y.js)
   const sharedConsole = new SharedConsole(editor.ydoc, outputContent, () => username);
 
   // Initialize mouse cursor tracking
-  const mouseCursors = new MouseCursors(editor.awareness, editorContainer);
+  // Drawn over the editor, so it reads the same theme-lit view as the carets.
+  const mouseCursors = new MouseCursors(editor.editorAwareness, editorContainer);
+  editor.provider.on('authenticated', () => {
+    authRetryMs = AUTH_RETRY_MIN_MS;
+  });
 
   // Setup awareness listener for connected users display
   const cleanupAwareness = setupAwarenessListener(
@@ -216,9 +269,9 @@ async function init() {
   const DOCK_KEY = 'collabjs_panel_dock';
   const WIDTH_KEY = 'collabjs_panel_width';
   const HEIGHT_KEY = 'collabjs_panel_height';
-  const MIN_WIDTH = 320; // must clear the 300px ad
+  const MIN_WIDTH = 320; // keeps the header's title and buttons on one row
   const MAX_WIDTH = 800;
-  const MIN_HEIGHT = 290; // header + 250px ad
+  const MIN_HEIGHT = 120; // header plus a few lines of output
   type Dock = 'right' | 'bottom';
 
   const readSize = (key: string, fallback: number, min: number, max: number) => {

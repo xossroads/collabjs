@@ -11,7 +11,7 @@ function roomRewrite() {
     name: 'collabjs-room-rewrite',
     configureServer(server: any) {
       server.middlewares.use((req: any, _res: any, next: any) => {
-        if (req.url && /^\/room\/[a-zA-Z0-9-]+(?:[?#].*)?$/.test(req.url)) {
+        if (req.url && /^\/room\/[a-zA-Z0-9-]{1,128}(?:[?#].*)?$/.test(req.url)) {
           req.url = '/app.html';
         }
         next();

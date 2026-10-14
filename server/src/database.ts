@@ -1,7 +1,25 @@
 import pg from 'pg';
+import { readFile } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// schema.sql lives in server/src. Resolve it relative to this file's parent
+// so the same path works from src/ (tsx in dev) and dist/ (prod image, which
+// copies the schema to server/src/schema.sql).
+const SCHEMA_PATH = path.join(__dirname, '../src/schema.sql');
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/collabjs',
+});
+
+// An idle pooled connection that dies (database restarted, network blip)
+// makes the pool emit 'error'. Unhandled, that crashes the process; the pool
+// already discards the dead client and the next query reconnects, so logging
+// is all that's needed.
+pool.on('error', (error) => {
+  console.error('Idle database connection lost:', error.message);
 });
 
 export async function getDocument(roomId: string): Promise<Buffer | null> {
@@ -92,6 +110,16 @@ export async function testConnection(): Promise<boolean> {
   }
 }
 
+// Apply schema.sql on startup. Postgres's docker-entrypoint-initdb.d only runs
+// against an empty data volume, and the prod image has no psql for
+// `npm run db:migrate`, so without this an existing volume never picks up new
+// tables or columns. Every statement in the schema is idempotent
+// (IF NOT EXISTS), so re-running it on each boot is safe.
+export async function applySchema(): Promise<void> {
+  const sql = await readFile(SCHEMA_PATH, 'utf8');
+  await pool.query(sql);
+}
+
 // --- Per-room host -----------------------------------------------------
 
 export async function getRoomHost(
@@ -163,12 +191,19 @@ export async function purgeExpiredHostSessions(): Promise<number> {
 }
 
 // Wipe everything for a single room: document state, activity logs, host
-// record (cascade-deletes its sessions). Run inside a single transaction
-// so a failure mid-way doesn't leave a half-deleted room behind.
-export async function deleteRoom(roomId: string): Promise<void> {
+// record (cascade-deletes its sessions), and leave a tombstone pointing at
+// the successor room. Run inside a single transaction so a failure mid-way
+// doesn't leave a half-deleted room behind.
+export async function deleteRoom(roomId: string, nextRoomId: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO deleted_rooms (room_id, next_room_id)
+       VALUES ($1, $2)
+       ON CONFLICT (room_id) DO NOTHING`,
+      [roomId, nextRoomId]
+    );
     await client.query('DELETE FROM activity_logs WHERE room_id = $1', [roomId]);
     await client.query('DELETE FROM documents WHERE room_id = $1', [roomId]);
     // host_sessions cascade-deletes via the FK on room_hosts.
@@ -180,6 +215,15 @@ export async function deleteRoom(roomId: string): Promise<void> {
   } finally {
     client.release();
   }
+}
+
+// The successor room id if this room was nuked, else null.
+export async function getDeletedRoomSuccessor(roomId: string): Promise<string | null> {
+  const result = await pool.query(
+    'SELECT next_room_id FROM deleted_rooms WHERE room_id = $1',
+    [roomId]
+  );
+  return result.rows[0]?.next_room_id ?? null;
 }
 
 // --- TTL purges ---------------------------------------------------------
@@ -198,6 +242,14 @@ export async function purgeStaleDocuments(maxAgeDays: number): Promise<number> {
 export async function purgeOldActivityLogs(maxAgeDays: number): Promise<number> {
   const result = await pool.query(
     `DELETE FROM activity_logs WHERE recorded_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [maxAgeDays]
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function purgeOldTombstones(maxAgeDays: number): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM deleted_rooms WHERE deleted_at < NOW() - ($1::int * INTERVAL '1 day')`,
     [maxAgeDays]
   );
   return result.rowCount ?? 0;

@@ -11,6 +11,8 @@
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
   <meta name="description" content="CollabJS — a real-time collaborative JavaScript editor. Share a link and code together, instantly.">
   <title>CollabJS — Collaborative JavaScript Editor</title>
+  <!-- Sets light/dark before first paint; external because the CSP forbids inline scripts. -->
+  <script src="/mode.js"></script>
   <link rel="stylesheet" href="/src/landing.css">
 </head>
 <body>
@@ -38,6 +40,8 @@
       <a href="https://github.com/xossroads/collabjs" target="_blank" rel="noopener">GitHub</a>
     </footer>
   </main>
+
+  <button id="mode-toggle" class="mode-toggle" type="button"></button>
 
   <script type="module" src="/src/landing.ts"></script>
 </body>

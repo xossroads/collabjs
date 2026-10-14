@@ -1,25 +1,30 @@
 import type { IncomingMessage, IncomingHttpHeaders } from 'http';
 import type { Request, Response, NextFunction } from 'express';
 
+// In production the app ports are reachable only through nginx, which
+// overwrites X-Real-IP with the real visitor IP (restored from
+// CF-Connecting-IP by cloudflare-ips.conf). In plain dev, clients connect
+// straight to the app, so any forwarding header is client-supplied.
+const trustProxyHeaders = process.env.NODE_ENV === 'production';
+
 // Resolve the real client IP. Behind nginx the `trust proxy` Express setting
 // already does this for req.ip, but we call it directly from Hocuspocus too,
 // which doesn't have Express's helpers — so do it ourselves and use the same
-// rules everywhere. Order matters: x-forwarded-for is the standard, x-real-ip
-// is what nginx sets on /ws today, raw socket is the fallback for direct
-// connections.
+// rules everywhere.
+//
+// X-Forwarded-For is deliberately ignored: Cloudflare and nginx
+// ($proxy_add_x_forwarded_for) append to whatever the client sent, so its
+// leftmost entry is attacker-controlled and would let a client spoof its way
+// around (or into someone else's) per-IP limits. X-Real-IP is set, not
+// appended, by nginx on every location.
 export function getClientIp(
   req: IncomingMessage | undefined,
   headers: IncomingHttpHeaders
 ): string {
-  const xff = headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.length > 0) {
-    return xff.split(',')[0].trim();
+  if (trustProxyHeaders) {
+    const xri = headers['x-real-ip'];
+    if (typeof xri === 'string' && xri.length > 0) return xri;
   }
-  if (Array.isArray(xff) && xff.length > 0) {
-    return xff[0].split(',')[0].trim();
-  }
-  const xri = headers['x-real-ip'];
-  if (typeof xri === 'string') return xri;
   return req?.socket?.remoteAddress || 'unknown';
 }
 

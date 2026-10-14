@@ -3,6 +3,7 @@ import {
   purgeOldActivityLogs,
   purgeStaleUsers,
   purgeExpiredHostSessions,
+  purgeOldTombstones,
 } from './database.js';
 
 interface CleanupConfig {
@@ -23,13 +24,29 @@ function readNumberEnv(name: string, defaultValue: number): number {
   return n;
 }
 
+// setInterval stores its delay as a signed 32-bit ms count; anything larger
+// (~596h) is silently replaced with 1ms, which would run cleanup in a hot
+// loop. Clamp to the largest delay Node accepts.
+const MAX_INTERVAL_HOURS = Math.floor((2 ** 31 - 1) / (60 * 60 * 1000));
+
 function readConfig(): CleanupConfig {
   return {
     documentTtlDays: readNumberEnv('DOCUMENT_TTL_DAYS', 30),
     activityLogTtlDays: readNumberEnv('ACTIVITY_LOG_TTL_DAYS', 90),
     userTtlDays: readNumberEnv('USER_TTL_DAYS', 90),
-    intervalHours: readNumberEnv('CLEANUP_INTERVAL_HOURS', 24),
+    intervalHours: readIntervalHours(),
   };
+}
+
+function readIntervalHours(): number {
+  const hours = readNumberEnv('CLEANUP_INTERVAL_HOURS', 24);
+  if (hours > MAX_INTERVAL_HOURS) {
+    console.warn(
+      `CLEANUP_INTERVAL_HOURS=${hours} exceeds the timer limit, using ${MAX_INTERVAL_HOURS}`
+    );
+    return MAX_INTERVAL_HOURS;
+  }
+  return hours;
 }
 
 async function runOnce(config: CleanupConfig): Promise<void> {
@@ -39,6 +56,12 @@ async function runOnce(config: CleanupConfig): Promise<void> {
     tasks.push([
       `documents older than ${config.documentTtlDays}d`,
       () => purgeStaleDocuments(config.documentTtlDays),
+    ]);
+    // Nuked-room tombstones share the document TTL: past it, the room's
+    // content would have been purged anyway.
+    tasks.push([
+      `deleted-room tombstones older than ${config.documentTtlDays}d`,
+      () => purgeOldTombstones(config.documentTtlDays),
     ]);
   }
   if (config.activityLogTtlDays > 0) {

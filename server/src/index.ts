@@ -13,12 +13,14 @@ import {
   logActivity,
   upsertUser,
   testConnection,
+  applySchema,
   getRoomHost,
   tryClaimRoomHost,
   createHostSession,
   getHostSession,
   revokeAllHostSessions,
   deleteRoom,
+  getDeletedRoomSuccessor,
   getRoomActivityStats,
 } from './database.js';
 import { startCleanupJob } from './cleanup.js';
@@ -36,16 +38,25 @@ const isProduction = NODE_ENV === 'production';
 // Track if database is available
 let dbAvailable = false;
 
-// Mirror of the client-side room-ID regex. Reject any documentName that
-// doesn't match — Hocuspocus would otherwise accept whatever string a client
-// sends (including newlines, slashes, or strings long enough to break the
-// VARCHAR(255) on the documents table).
-const DOCUMENT_NAME_RE = /^[a-zA-Z0-9-]{1,128}$/;
+// The one room-ID shape, used for the WS documentName, every API route, and
+// the /room/:id page route. Mirrored in client/src/host.ts and
+// client/vite.config.ts — keep all three in sync, or a room can load but
+// fail to sync or record activity. Without this check Hocuspocus would accept
+// whatever string a client sends (including newlines, slashes, or strings
+// long enough to break the VARCHAR(255) on the documents table).
+const ROOM_ID_SOURCE = '[a-zA-Z0-9-]{1,128}';
+const ROOM_ID_RE = new RegExp(`^${ROOM_ID_SOURCE}$`);
 
 // Per-IP cap on concurrent WebSocket connections. Without this, one client
 // can open thousands of WS connections and pin server memory. The default is
 // generous (20) because legitimate users may have multiple tabs; tune via
 // MAX_WS_CONNECTIONS_PER_IP if needed.
+//
+// Counted per raw socket in onUpgrade and released on the socket's `close`
+// event, which fires exactly once on every path. Counting in onConnect /
+// onDisconnect leaked: onDisconnect only fires for fully established
+// connections, so a socket rejected after onConnect (kick ban in
+// onAuthenticate, mid-handshake close) was never decremented.
 const MAX_WS_PER_IP = (() => {
   const raw = process.env.MAX_WS_CONNECTIONS_PER_IP;
   if (!raw) return 20;
@@ -53,6 +64,23 @@ const MAX_WS_PER_IP = (() => {
   return Number.isFinite(n) && n > 0 ? n : 20;
 })();
 const wsConnectionsByIp = new Map<string, number>();
+
+// Per-socket cap on rooms. Hocuspocus multiplexes documents over one socket,
+// so the per-IP socket cap alone doesn't bound how many rooms a client can
+// load into memory: one socket could auth into thousands. The client opens
+// one room per socket; 4 leaves headroom. Keyed by the upgrade request,
+// which Hocuspocus passes to every hook for that socket, so the entry is
+// collected with the socket — no cleanup path to get wrong.
+const MAX_ROOMS_PER_SOCKET = 4;
+const roomsBySocket = new WeakMap<object, Set<string>>();
+
+// Reject a connection from onConnect/onAuthenticate. Under Hocuspocus 3 both
+// run in the auth step, so a throw becomes a permission-denied message
+// carrying `reason` (the socket stays open). The client acts on the reasons
+// it knows ('kicked', 'room-deleted:<next>') and retries anything else.
+function denyConnection(message: string, reason: string): never {
+  throw Object.assign(new Error(message), { reason });
+}
 
 // Kick bans, keyed "roomId:clientId" → expiry epoch ms. In-memory (single
 // process) and best-effort: clientId is the client's localStorage UUID, so
@@ -93,15 +121,34 @@ function isKickBanned(roomId: string, clientId: string): boolean {
 // Entries live for the duration of the DELETE /api/rooms/:id handler.
 const roomsBeingNuked = new Set<string>();
 
-// Test database connection on startup
-testConnection().then(available => {
-  dbAvailable = available;
-  if (available) {
-    console.log('Database connected successfully');
-  } else {
-    console.log('Database not available - running without persistence');
+// Connect to the database, retrying until it comes up. After a host reboot
+// Docker's restart policy can start this container before Postgres accepts
+// connections; a single probe would leave persistence off for the life of the
+// process. The schema is applied before dbAvailable flips, so no query runs
+// against tables that don't exist yet.
+const DB_RETRY_MS = 5000;
+
+async function connectDatabase(): Promise<void> {
+  let warned = false;
+  for (;;) {
+    if (await testConnection()) {
+      try {
+        await applySchema();
+        dbAvailable = true;
+        console.log('Database connected successfully');
+        return;
+      } catch (error) {
+        console.error('Failed to apply database schema:', error);
+      }
+    } else if (!warned) {
+      console.log('Database not available - running without persistence, retrying');
+      warned = true;
+    }
+    await new Promise((r) => setTimeout(r, DB_RETRY_MS));
   }
-});
+}
+
+connectDatabase();
 
 // Periodic TTL cleanup. The job reads dbAvailable on each tick so it picks
 // up a database that came online after startup, and no-ops if it's still
@@ -109,7 +156,7 @@ testConnection().then(available => {
 startCleanupJob(() => dbAvailable);
 
 // Hocuspocus server with PostgreSQL persistence
-const hocuspocus = Server.configure({
+const server = new Server({
   debounce: 2000,
   maxDebounce: 10000,
 
@@ -140,67 +187,107 @@ const hocuspocus = Server.configure({
     }),
   ],
 
-  async onConnect({ documentName, request, requestHeaders, requestParameters, socketId }) {
-    const ip = getClientIp(request, requestHeaders);
-
-    // Reject malformed document names. Throwing rejects the connection.
-    if (!DOCUMENT_NAME_RE.test(documentName)) {
-      console.warn(
-        `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
-      );
-      throw new Error('Invalid document name');
-    }
-
-    // Reject if the room is being nuked. Otherwise a reconnecting client
-    // could hold the doc in memory while we're deleting it.
-    if (roomsBeingNuked.has(documentName)) {
-      throw new Error('Room is being deleted');
-    }
-
-    // The client identifies itself with its localStorage UUID as a query
-    // param on the WS URL. Missing/malformed just means this connection
-    // can't be targeted by a kick — old clients keep working.
-    //
-    // Note this ban check is only a fast-path socket close: the provider
-    // sends an Auth message first, and Hocuspocus establishes that path
-    // concurrently with onConnect, so a throw here can lose the race. The
-    // authoritative, race-free rejection is in onAuthenticate below.
-    const clientId = clientIdFromParams(requestParameters);
-    if (clientId && isKickBanned(documentName, clientId)) {
-      console.warn(
-        `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId} ip=${sanitizeForLog(ip)}`
-      );
-      throw new Error('Kicked');
-    }
-
-    // Enforce per-IP connection cap. Count is incremented here and decremented
-    // in onDisconnect, so a connection that throws here never gets counted.
+  async onUpgrade({ request, socket }) {
+    const ip = getClientIp(request, request.headers);
     const current = wsConnectionsByIp.get(ip) ?? 0;
     if (current >= MAX_WS_PER_IP) {
       console.warn(
         `WS reject (over per-IP cap) ip=${sanitizeForLog(ip)} cap=${MAX_WS_PER_IP}`
       );
-      throw new Error('Too many connections');
+      // end() flushes the 429 before closing; destroy() would drop it.
+      socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
+      // Hocuspocus treats an empty rejection as "handled, stop here"; a real
+      // Error would be rethrown out of its upgrade listener.
+      return Promise.reject();
     }
     wsConnectionsByIp.set(ip, current + 1);
+    socket.once('close', () => {
+      const n = wsConnectionsByIp.get(ip) ?? 0;
+      if (n <= 1) {
+        wsConnectionsByIp.delete(ip);
+      } else {
+        wsConnectionsByIp.set(ip, n - 1);
+      }
+    });
+  },
+
+  async onConnect({ documentName, request, requestHeaders, socketId }) {
+    const ip = getClientIp(request, requestHeaders);
+
+    // Reject malformed document names. Throwing rejects the connection.
+    if (!ROOM_ID_RE.test(documentName)) {
+      console.warn(
+        `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
+      );
+      denyConnection('Invalid document name', 'invalid-room');
+    }
+
+    // Reject if the room is being nuked. Otherwise a reconnecting client
+    // could hold the doc in memory while we're deleting it.
+    // The client retries this; by then the tombstone is written and sends
+    // it on to the successor room.
+    if (roomsBeingNuked.has(documentName)) {
+      denyConnection('Room is being deleted', 'room-deleting');
+    }
+
+    let rooms = roomsBySocket.get(request);
+    if (!rooms) {
+      rooms = new Set();
+      roomsBySocket.set(request, rooms);
+    }
+    if (!rooms.has(documentName) && rooms.size >= MAX_ROOMS_PER_SOCKET) {
+      console.warn(
+        `WS reject (over per-socket room cap) ip=${sanitizeForLog(ip)} socket=${socketId} cap=${MAX_ROOMS_PER_SOCKET}`
+      );
+      denyConnection('Too many rooms on one connection', 'too-many-rooms');
+    }
+    rooms.add(documentName);
 
     console.log(
-      `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${current + 1}`
+      `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${wsConnectionsByIp.get(ip) ?? 0}`
     );
   },
 
   // The provider always sends an Auth message (empty token) right after the
   // socket opens, and this hook runs sequentially in that path — a throw
   // here reliably prevents the connection from ever being established (no
-  // awareness applied, nothing broadcast). This is where the kick ban is
-  // actually enforced.
+  // awareness applied, nothing broadcast). Rejections here also reach the
+  // client as a permission-denied `reason` instead of a socket close, so it
+  // can show a message rather than reconnecting forever.
+  //
+  // The client identifies itself with its localStorage UUID as a query
+  // param on the WS URL. Missing/malformed just means this connection
+  // can't be targeted by a kick — old clients keep working.
   async onAuthenticate({ documentName, requestParameters }) {
     const clientId = clientIdFromParams(requestParameters);
     if (clientId && isKickBanned(documentName, clientId)) {
       console.warn(
-        `WS reject (kicked, auth) room=${sanitizeForLog(documentName)} clientId=${clientId}`
+        `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId}`
       );
-      throw new Error('Kicked');
+      denyConnection('Kicked', 'kicked');
+    }
+
+    // A nuked room stays dead. Without this, a client that missed the
+    // room-nuked broadcast reconnects later and re-syncs its pre-nuke Y.Doc
+    // into the empty server doc. The reason reaches the client as a
+    // permission-denied message ("room-deleted:<next>") so it can follow the
+    // group to the successor room.
+    if (dbAvailable) {
+      let nextRoomId: string | null;
+      try {
+        nextRoomId = await getDeletedRoomSuccessor(documentName);
+      } catch (error) {
+        // Can't tell whether the room was nuked. Refuse for now rather than
+        // risk resurrecting it; the client retries with backoff.
+        console.error('tombstone check failed:', error);
+        denyConnection('Room status unavailable', 'unavailable');
+      }
+      if (nextRoomId) {
+        console.warn(
+          `WS reject (room deleted) room=${sanitizeForLog(documentName)} next=${sanitizeForLog(nextRoomId)}`
+        );
+        denyConnection('Room deleted', `room-deleted:${nextRoomId}`);
+      }
     }
   },
 
@@ -216,18 +303,12 @@ const hocuspocus = Server.configure({
     const ip = getClientIp(undefined, requestHeaders);
     wsClientIdBySocket.delete(socketId);
 
-    const current = wsConnectionsByIp.get(ip) ?? 0;
-    if (current <= 1) {
-      wsConnectionsByIp.delete(ip);
-    } else {
-      wsConnectionsByIp.set(ip, current - 1);
-    }
-
     console.log(
       `WS disconnect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} remaining=${clientsCount}`
     );
   },
 });
+const hocuspocus = server.hocuspocus;
 
 // Express app setup
 const app = express();
@@ -246,7 +327,9 @@ app.use(requestLogger);
 // CORS allowlist. In dev the Vite client runs on a different port (5173) and
 // needs to talk to the API on 3001, so we allow that origin explicitly. In
 // prod everything is same-origin behind nginx, so we can lock CORS down to
-// the configured ALLOWED_ORIGINS list (comma-separated).
+// the configured ALLOWED_ORIGINS list (comma-separated). An empty list means
+// same-origin only: same-origin requests don't need CORS headers, so every
+// cross-origin caller is refused.
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
 const allowedOrigins: string[] = allowedOriginsEnv
   ? allowedOriginsEnv.split(',').map((o) => o.trim()).filter(Boolean)
@@ -259,7 +342,6 @@ app.use(
     origin: (origin, callback) => {
       // Same-origin requests (no Origin header) are always allowed.
       if (!origin) return callback(null, true);
-      if (allowedOrigins.length === 0) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       // Disallowed: omit the Access-Control-Allow-Origin header so the
       // browser's SOP blocks the response. Don't throw — that turns into a
@@ -302,7 +384,6 @@ app.use('/api/', apiLimiter);
 // Awareness names and room IDs come from clients we don't trust. Validate
 // shape and length on every entry; reject rather than coerce.
 
-const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,64}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_USERNAME_LEN = 64;
 const MAX_KEYSTROKES_PER_REPORT = 100_000;
@@ -378,6 +459,11 @@ app.post('/api/activity', async (req, res) => {
   }
 
   try {
+    // A nuke redirects every client, and their unload flush can land during
+    // or after the delete. Don't write rows for a room that's gone.
+    if (roomsBeingNuked.has(roomId) || (await getDeletedRoomSuccessor(roomId))) {
+      return res.json({ success: true, persisted: false });
+    }
     await logActivity(roomId, username, keystrokeCount, inEditor, clientId);
     res.json({ success: true, persisted: true });
   } catch (error) {
@@ -444,7 +530,7 @@ function broadcastHostStateChanged(roomId: string): void {
 }
 
 function isValidRoomIdParam(v: string | undefined): v is string {
-  return typeof v === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(v);
+  return typeof v === 'string' && ROOM_ID_RE.test(v);
 }
 
 function isValidPassword(v: unknown): v is string {
@@ -504,6 +590,11 @@ app.post('/api/rooms/:id/claim', async (req, res) => {
   }
 
   try {
+    // A nuked room can't be re-claimed; its group has moved on.
+    if (await getDeletedRoomSuccessor(roomId)) {
+      return res.status(410).json({ error: 'Room was deleted' });
+    }
+
     const passwordHash = await hashPassword(password);
     const won = await tryClaimRoomHost(roomId, passwordHash);
     if (!won) {
@@ -696,7 +787,9 @@ app.post('/api/rooms/:id/host/kick', requireHost, async (req: HostRequest, res) 
 // Nuke the room. Wipes Y.js state, activity logs, the host record (which
 // cascade-clears all session tokens), and force-disconnects every connected
 // client. The roomsBeingNuked guard keeps a reconnecting client or the
-// final unloadDocument save from re-creating rows we're deleting.
+// final unloadDocument save from re-creating rows while the delete runs;
+// after that, the deleted_rooms tombstone (checked in onAuthenticate and
+// claim) keeps the room dead for clients that missed the broadcast.
 //
 // Before kicking connections, we broadcast a stateless "nuked" message so
 // any other open tabs in the room can reload and drop their local Y.Doc
@@ -732,7 +825,7 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
     }
 
     // 3. Wipe DB rows transactionally.
-    await deleteRoom(roomId);
+    await deleteRoom(roomId, nextRoomId);
 
     console.log(
       `HOST nuke room=${sanitizeForLog(roomId)} next=${sanitizeForLog(nextRoomId)}`
@@ -751,7 +844,7 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
 // (app.html) here. Everything else (bot scans, junk paths) gets a 404 instead
 // of a 200 that masquerades as the app.
 if (isProduction) {
-  const roomRoute = /^\/room\/[a-zA-Z0-9-]+$/;
+  const roomRoute = new RegExp(`^/room/${ROOM_ID_SOURCE}$`);
   app.get('*', (req, res) => {
     if (!roomRoute.test(req.path)) {
       res.status(404).type('txt').send('Not Found');
@@ -768,6 +861,6 @@ app.listen(API_PORT, () => {
   console.log(`REST API running on http://localhost:${API_PORT}`);
 });
 
-hocuspocus.listen(PORT).then(() => {
+server.listen(PORT).then(() => {
   console.log(`Hocuspocus WebSocket server running on ws://localhost:${PORT}`);
 });

@@ -1,5 +1,5 @@
 import { Awareness } from 'y-protocols/awareness';
-import { shouldUseDarkText } from './username';
+import { readableTextOn } from './colors';
 import { sanitizeRemoteUser } from './sanitize';
 
 interface MousePosition {
@@ -77,6 +77,11 @@ export class MouseCursors {
     this.renderCursors();
   };
 
+  // Redraw from current state (e.g. after the editor theme changes colors).
+  refresh() {
+    this.renderCursors();
+  }
+
   private renderCursors() {
     const states = this.awareness.getStates();
     const localClientId = this.awareness.clientID;
@@ -130,7 +135,7 @@ export class MouseCursors {
     // Build with DOM APIs only. `user.name` and `user.color` come from remote
     // awareness state, which any room participant controls — string templating
     // into innerHTML here would be a same-origin XSS sink.
-    const textColor = shouldUseDarkText(user.color) ? '#1e1e1e' : '#ffffff';
+    const textColor = readableTextOn(user.color);
     const cursor = document.createElement('div');
     cursor.className = 'remote-cursor';
 

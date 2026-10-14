@@ -15,7 +15,38 @@
   --run:     #4caf50;  /* Run-button green  */
   --run-hi:  #59c95d;
   --js:      #f7df1e;  /* JavaScript yellow */
+  --js-glow: rgba(247,223,30,.35);
+  --wordmark: #e8e8e8;
+  --grid-line: rgba(255,255,255,.022);
+  --glow-a: rgba(86,156,214,.16);
+  --glow-b: rgba(76,175,80,.10);
+  --window-shadow: 0 1px 0 rgba(255,255,255,.03) inset, 0 24px 60px -20px rgba(0,0,0,.7), 0 8px 20px -12px rgba(0,0,0,.6);
+  color-scheme: dark;
   --font: ui-monospace, "SF Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas, "Liberation Mono", monospace;
+}
+
+/* Light mode (VS Code Light+ palette), set on <html> by /mode.js and the
+   bottom-left toggle. The JS yellow is darkened to stay legible on white. */
+:root[data-mode="light"] {
+  color-scheme: light;
+  --bg:      #f6f6f6;
+  --panel:   #ffffff;
+  --bar:     #ececec;
+  --border:  #d6d6d6;
+  --text:    #1f1f1f;
+  --muted:   #616161;
+  --gutter:  #8a8a8a;
+  --blue:    #0000ff;
+  --varblue: #001080;
+  --green:   #008000;
+  --yellow:  #795e26;
+  --js:      #a37f00;
+  --js-glow: transparent;
+  --wordmark: #1f1f1f;
+  --grid-line: rgba(0,0,0,.035);
+  --glow-a: rgba(0,95,184,.10);
+  --glow-b: rgba(76,175,80,.10);
+  --window-shadow: 0 24px 60px -24px rgba(0,0,0,.25), 0 8px 20px -14px rgba(0,0,0,.2);
 }
 
 * { box-sizing: border-box; }
@@ -39,8 +70,8 @@ body {
   position: fixed;
   inset: -2px;
   background-image:
-    linear-gradient(rgba(255,255,255,.022) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(255,255,255,.022) 1px, transparent 1px);
+    linear-gradient(var(--grid-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-line) 1px, transparent 1px);
   background-size: 34px 34px;
   mask-image: radial-gradient(circle at 50% 42%, #000 0%, transparent 78%);
   pointer-events: none;
@@ -53,8 +84,8 @@ body {
   height: 520px;
   transform: translate(-50%, -50%);
   background:
-    radial-gradient(closest-side, rgba(86,156,214,.16), transparent 70%),
-    radial-gradient(closest-side, rgba(76,175,80,.10), transparent 72%);
+    radial-gradient(closest-side, var(--glow-a), transparent 70%),
+    radial-gradient(closest-side, var(--glow-b), transparent 72%);
   filter: blur(20px);
   pointer-events: none;
 }
@@ -95,10 +126,10 @@ body {
   line-height: 1;
   user-select: none;
 }
-.wordmark-collab { color: #e8e8e8; }
+.wordmark-collab { color: var(--wordmark); }
 .wordmark-js {
   color: var(--js);
-  text-shadow: 0 0 26px rgba(247,223,30,.35);
+  text-shadow: 0 0 26px var(--js-glow);
 }
 
 /* --- editor window --------------------------------------------------- */
@@ -108,10 +139,7 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   overflow: hidden;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,.03) inset,
-    0 24px 60px -20px rgba(0,0,0,.7),
-    0 8px 20px -12px rgba(0,0,0,.6);
+  box-shadow: var(--window-shadow);
 }
 
 .window-bar {
@@ -207,3 +235,21 @@ body {
 }
 .foot a { color: var(--muted); text-decoration: none; border-bottom: 1px solid transparent; transition: color .15s, border-color .15s; }
 .foot a:hover { color: var(--varblue); border-bottom-color: var(--varblue); }
+
+/* --- light/dark toggle (bottom-left corner) --------------------------- */
+.mode-toggle {
+  position: fixed;
+  left: 16px;
+  bottom: 14px;
+  z-index: 2;
+  padding: 5px 10px;
+  font: 12px/1 var(--font);
+  color: var(--muted);
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.mode-toggle:hover { color: var(--varblue); border-color: var(--varblue); }
+.mode-toggle:focus-visible { outline: 2px solid var(--js); outline-offset: 2px; }

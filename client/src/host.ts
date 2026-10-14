@@ -183,11 +183,12 @@ export async function fetchRoomStats(
   return { ok: false, reason: 'server' };
 }
 
-// Mirror of the server-side room-id regex. Used at every parse boundary that
-// hands an untrusted string to navigation so a buggy or hostile server (or a
-// stateless message tampered with elsewhere) can't redirect us somewhere
-// unexpected.
-const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,128}$/;
+// Mirror of the server-side room-id regex (server/src/index.ts; also
+// client/vite.config.ts) — keep them in sync. Used to parse the room from the
+// URL and at every parse boundary that hands an untrusted string to
+// navigation, so a buggy or hostile server (or a stateless message tampered
+// with elsewhere) can't redirect us somewhere unexpected.
+export const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,128}$/;
 
 export async function logoutAllHostSessions(roomId: string, token: string): Promise<LogoutAllResult> {
   let res: Response;
@@ -237,6 +238,15 @@ export function parseHostStatelessMessage(payload: string): HostStatelessMessage
   } catch {
     return null;
   }
+}
+
+// The server refuses connections to a nuked room in onAuthenticate with the
+// reason "room-deleted:<nextRoomId>" — the room the group moved to. Returns
+// that id (validated, since it drives navigation), or null for any other
+// reason.
+export function parseRoomDeletedReason(reason: string): string | null {
+  const match = /^room-deleted:(.+)$/.exec(reason);
+  return match && ROOM_ID_RE.test(match[1]) ? match[1] : null;
 }
 
 export type KickResult = { ok: true } | HostActionFailure;
