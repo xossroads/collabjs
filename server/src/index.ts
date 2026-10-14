@@ -13,6 +13,7 @@ import {
   logActivity,
   upsertUser,
   testConnection,
+  applySchema,
   getRoomHost,
   tryClaimRoomHost,
   createHostSession,
@@ -36,16 +37,25 @@ const isProduction = NODE_ENV === 'production';
 // Track if database is available
 let dbAvailable = false;
 
-// Mirror of the client-side room-ID regex. Reject any documentName that
-// doesn't match — Hocuspocus would otherwise accept whatever string a client
-// sends (including newlines, slashes, or strings long enough to break the
-// VARCHAR(255) on the documents table).
-const DOCUMENT_NAME_RE = /^[a-zA-Z0-9-]{1,128}$/;
+// The one room-ID shape, used for the WS documentName, every API route, and
+// the /room/:id page route. Mirrored in client/src/host.ts and
+// client/vite.config.ts — keep all three in sync, or a room can load but
+// fail to sync or record activity. Without this check Hocuspocus would accept
+// whatever string a client sends (including newlines, slashes, or strings
+// long enough to break the VARCHAR(255) on the documents table).
+const ROOM_ID_SOURCE = '[a-zA-Z0-9-]{1,128}';
+const ROOM_ID_RE = new RegExp(`^${ROOM_ID_SOURCE}$`);
 
 // Per-IP cap on concurrent WebSocket connections. Without this, one client
 // can open thousands of WS connections and pin server memory. The default is
 // generous (20) because legitimate users may have multiple tabs; tune via
 // MAX_WS_CONNECTIONS_PER_IP if needed.
+//
+// Counted per raw socket in onUpgrade and released on the socket's `close`
+// event, which fires exactly once on every path. Counting in onConnect /
+// onDisconnect leaked: onDisconnect only fires for fully established
+// connections, so a socket rejected after onConnect (kick ban in
+// onAuthenticate, mid-handshake close) was never decremented.
 const MAX_WS_PER_IP = (() => {
   const raw = process.env.MAX_WS_CONNECTIONS_PER_IP;
   if (!raw) return 20;
@@ -93,15 +103,34 @@ function isKickBanned(roomId: string, clientId: string): boolean {
 // Entries live for the duration of the DELETE /api/rooms/:id handler.
 const roomsBeingNuked = new Set<string>();
 
-// Test database connection on startup
-testConnection().then(available => {
-  dbAvailable = available;
-  if (available) {
-    console.log('Database connected successfully');
-  } else {
-    console.log('Database not available - running without persistence');
+// Connect to the database, retrying until it comes up. After a host reboot
+// Docker's restart policy can start this container before Postgres accepts
+// connections; a single probe would leave persistence off for the life of the
+// process. The schema is applied before dbAvailable flips, so no query runs
+// against tables that don't exist yet.
+const DB_RETRY_MS = 5000;
+
+async function connectDatabase(): Promise<void> {
+  let warned = false;
+  for (;;) {
+    if (await testConnection()) {
+      try {
+        await applySchema();
+        dbAvailable = true;
+        console.log('Database connected successfully');
+        return;
+      } catch (error) {
+        console.error('Failed to apply database schema:', error);
+      }
+    } else if (!warned) {
+      console.log('Database not available - running without persistence, retrying');
+      warned = true;
+    }
+    await new Promise((r) => setTimeout(r, DB_RETRY_MS));
   }
-});
+}
+
+connectDatabase();
 
 // Periodic TTL cleanup. The job reads dbAvailable on each tick so it picks
 // up a database that came online after startup, and no-ops if it's still
@@ -140,11 +169,35 @@ const hocuspocus = Server.configure({
     }),
   ],
 
+  async onUpgrade({ request, socket }) {
+    const ip = getClientIp(request, request.headers);
+    const current = wsConnectionsByIp.get(ip) ?? 0;
+    if (current >= MAX_WS_PER_IP) {
+      console.warn(
+        `WS reject (over per-IP cap) ip=${sanitizeForLog(ip)} cap=${MAX_WS_PER_IP}`
+      );
+      socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
+      socket.destroy();
+      // Hocuspocus treats an empty rejection as "handled, stop here"; a real
+      // Error would be rethrown out of its upgrade listener.
+      return Promise.reject();
+    }
+    wsConnectionsByIp.set(ip, current + 1);
+    socket.once('close', () => {
+      const n = wsConnectionsByIp.get(ip) ?? 0;
+      if (n <= 1) {
+        wsConnectionsByIp.delete(ip);
+      } else {
+        wsConnectionsByIp.set(ip, n - 1);
+      }
+    });
+  },
+
   async onConnect({ documentName, request, requestHeaders, requestParameters, socketId }) {
     const ip = getClientIp(request, requestHeaders);
 
     // Reject malformed document names. Throwing rejects the connection.
-    if (!DOCUMENT_NAME_RE.test(documentName)) {
+    if (!ROOM_ID_RE.test(documentName)) {
       console.warn(
         `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
       );
@@ -173,19 +226,8 @@ const hocuspocus = Server.configure({
       throw new Error('Kicked');
     }
 
-    // Enforce per-IP connection cap. Count is incremented here and decremented
-    // in onDisconnect, so a connection that throws here never gets counted.
-    const current = wsConnectionsByIp.get(ip) ?? 0;
-    if (current >= MAX_WS_PER_IP) {
-      console.warn(
-        `WS reject (over per-IP cap) ip=${sanitizeForLog(ip)} cap=${MAX_WS_PER_IP}`
-      );
-      throw new Error('Too many connections');
-    }
-    wsConnectionsByIp.set(ip, current + 1);
-
     console.log(
-      `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${current + 1}`
+      `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${wsConnectionsByIp.get(ip) ?? 0}`
     );
   },
 
@@ -216,13 +258,6 @@ const hocuspocus = Server.configure({
     const ip = getClientIp(undefined, requestHeaders);
     wsClientIdBySocket.delete(socketId);
 
-    const current = wsConnectionsByIp.get(ip) ?? 0;
-    if (current <= 1) {
-      wsConnectionsByIp.delete(ip);
-    } else {
-      wsConnectionsByIp.set(ip, current - 1);
-    }
-
     console.log(
       `WS disconnect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} remaining=${clientsCount}`
     );
@@ -246,7 +281,9 @@ app.use(requestLogger);
 // CORS allowlist. In dev the Vite client runs on a different port (5173) and
 // needs to talk to the API on 3001, so we allow that origin explicitly. In
 // prod everything is same-origin behind nginx, so we can lock CORS down to
-// the configured ALLOWED_ORIGINS list (comma-separated).
+// the configured ALLOWED_ORIGINS list (comma-separated). An empty list means
+// same-origin only: same-origin requests don't need CORS headers, so every
+// cross-origin caller is refused.
 const allowedOriginsEnv = process.env.ALLOWED_ORIGINS;
 const allowedOrigins: string[] = allowedOriginsEnv
   ? allowedOriginsEnv.split(',').map((o) => o.trim()).filter(Boolean)
@@ -259,7 +296,6 @@ app.use(
     origin: (origin, callback) => {
       // Same-origin requests (no Origin header) are always allowed.
       if (!origin) return callback(null, true);
-      if (allowedOrigins.length === 0) return callback(null, true);
       if (allowedOrigins.includes(origin)) return callback(null, true);
       // Disallowed: omit the Access-Control-Allow-Origin header so the
       // browser's SOP blocks the response. Don't throw — that turns into a
@@ -302,7 +338,6 @@ app.use('/api/', apiLimiter);
 // Awareness names and room IDs come from clients we don't trust. Validate
 // shape and length on every entry; reject rather than coerce.
 
-const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,64}$/;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_USERNAME_LEN = 64;
 const MAX_KEYSTROKES_PER_REPORT = 100_000;
@@ -444,7 +479,7 @@ function broadcastHostStateChanged(roomId: string): void {
 }
 
 function isValidRoomIdParam(v: string | undefined): v is string {
-  return typeof v === 'string' && /^[a-zA-Z0-9-]{1,128}$/.test(v);
+  return typeof v === 'string' && ROOM_ID_RE.test(v);
 }
 
 function isValidPassword(v: unknown): v is string {
@@ -751,7 +786,7 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
 // (app.html) here. Everything else (bot scans, junk paths) gets a 404 instead
 // of a 200 that masquerades as the app.
 if (isProduction) {
-  const roomRoute = /^\/room\/[a-zA-Z0-9-]+$/;
+  const roomRoute = new RegExp(`^/room/${ROOM_ID_SOURCE}$`);
   app.get('*', (req, res) => {
     if (!roomRoute.test(req.path)) {
       res.status(404).type('txt').send('Not Found');

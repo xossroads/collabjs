@@ -32,6 +32,7 @@ import {
   clearHostToken,
   fetchRoomStats,
   kickUser,
+  ROOM_ID_RE,
   type RoomUserStats,
 } from './host';
 
@@ -40,9 +41,9 @@ import {
 // The pre-existing 8-char slice was ~32 bits and easily brute-forceable.
 function getRoomId(): string {
   const path = window.location.pathname;
-  const match = path.match(/^\/room\/([a-zA-Z0-9-]+)$/);
+  const match = path.match(/^\/room\/(.+)$/);
 
-  if (match) {
+  if (match && ROOM_ID_RE.test(match[1])) {
     return match[1];
   }
 

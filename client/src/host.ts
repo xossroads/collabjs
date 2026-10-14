@@ -183,11 +183,12 @@ export async function fetchRoomStats(
   return { ok: false, reason: 'server' };
 }
 
-// Mirror of the server-side room-id regex. Used at every parse boundary that
-// hands an untrusted string to navigation so a buggy or hostile server (or a
-// stateless message tampered with elsewhere) can't redirect us somewhere
-// unexpected.
-const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,128}$/;
+// Mirror of the server-side room-id regex (server/src/index.ts; also
+// client/vite.config.ts) — keep them in sync. Used to parse the room from the
+// URL and at every parse boundary that hands an untrusted string to
+// navigation, so a buggy or hostile server (or a stateless message tampered
+// with elsewhere) can't redirect us somewhere unexpected.
+export const ROOM_ID_RE = /^[a-zA-Z0-9-]{1,128}$/;
 
 export async function logoutAllHostSessions(roomId: string, token: string): Promise<LogoutAllResult> {
   let res: Response;

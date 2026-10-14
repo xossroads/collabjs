@@ -1,4 +1,14 @@
 import pg from 'pg';
+import { readFile } from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// schema.sql lives in server/src. Resolve it relative to this file's parent
+// so the same path works from src/ (tsx in dev) and dist/ (prod image, which
+// copies the schema to server/src/schema.sql).
+const SCHEMA_PATH = path.join(__dirname, '../src/schema.sql');
 
 const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/collabjs',
@@ -90,6 +100,16 @@ export async function testConnection(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Apply schema.sql on startup. Postgres's docker-entrypoint-initdb.d only runs
+// against an empty data volume, and the prod image has no psql for
+// `npm run db:migrate`, so without this an existing volume never picks up new
+// tables or columns. Every statement in the schema is idempotent
+// (IF NOT EXISTS), so re-running it on each boot is safe.
+export async function applySchema(): Promise<void> {
+  const sql = await readFile(SCHEMA_PATH, 'utf8');
+  await pool.query(sql);
 }
 
 // --- Per-room host -----------------------------------------------------

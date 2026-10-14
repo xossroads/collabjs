@@ -41,7 +41,7 @@ export class ActivityTracker {
     // Flush on page unload
     window.addEventListener('beforeunload', () => {
       if (this.keystrokeCount > 0) {
-        this.flushSync();
+        this.flush();
       }
     });
   }
@@ -59,33 +59,19 @@ export class ActivityTracker {
 
     this.keystrokeCount = 0;
 
+    // keepalive lets the request outlive the page, so the visibilitychange /
+    // beforeunload flushes actually arrive. (sendBeacon can't do this: a
+    // string body goes out as text/plain, which express.json() won't parse.)
     try {
       await fetch('/api/activity', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(data),
+        keepalive: true,
       });
     } catch (error) {
       console.error('Failed to log activity:', error);
     }
-  }
-
-  private flushSync(): void {
-    if (this.keystrokeCount === 0) return;
-
-    const data = {
-      roomId: this.roomId,
-      username: this.username,
-      keystrokeCount: this.keystrokeCount,
-      inEditor: true,
-      clientId: this.clientId,
-    };
-
-    // Use sendBeacon for reliable delivery on page unload
-    navigator.sendBeacon(
-      '/api/activity',
-      JSON.stringify(data)
-    );
   }
 
   destroy(): void {
