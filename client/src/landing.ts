@@ -1,3 +1,5 @@
+import { setupModeToggle } from './mode';
+
 // Landing page: "Start coding" points at a brand-new room. Set the href on load
 // so it's a real link (middle-click / open-in-new-tab work), and refresh it on
 // each click so repeated clicks never reuse the same room id.
@@ -10,3 +12,6 @@ if (start) {
     start.href = newRoom();
   });
 }
+
+const modeToggle = document.getElementById('mode-toggle') as HTMLButtonElement | null;
+if (modeToggle) setupModeToggle(modeToggle);

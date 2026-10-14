@@ -92,26 +92,51 @@ export const THEMES: ThemeDefinition[] = [
   { id: 'xcode-light', name: 'Xcode Light', extension: xcodeLight, isDark: false },
 ];
 
-const STORAGE_KEY = 'collabjs-theme';
-const DEFAULT_THEME = 'vscode-dark';
+// Legacy single-theme key, from before themes were split by site mode. Only
+// read, to carry an existing pick over into the matching mode.
+const LEGACY_STORAGE_KEY = 'collabjs-theme';
+// Last theme picked in each site mode; the theme picker only offers the
+// current mode's themes, and flipping modes brings back that mode's pick.
+const MODE_STORAGE_KEY = { dark: 'collabjs-theme-dark', light: 'collabjs-theme-light' };
+const DEFAULT_THEME = { dark: 'vscode-dark', light: 'github-light' };
+
+export type ThemeMode = 'light' | 'dark';
 
 export function getThemeById(id: string): ThemeDefinition | undefined {
   return THEMES.find(t => t.id === id);
 }
 
-export function getThemeList(): { id: string; name: string; isDark: boolean }[] {
-  return THEMES.map(t => ({ id: t.id, name: t.name, isDark: t.isDark }));
+export function getThemesForMode(mode: ThemeMode): ThemeDefinition[] {
+  return THEMES.filter(t => t.isDark === (mode === 'dark'));
 }
 
-export function getSavedTheme(): string {
-  return localStorage.getItem(STORAGE_KEY) || DEFAULT_THEME;
+function readStorage(key: string): string | null {
+  try {
+    return localStorage.getItem(key);
+  } catch {
+    return null;
+  }
 }
 
 export function saveTheme(id: string): void {
-  localStorage.setItem(STORAGE_KEY, id);
+  const theme = getThemeById(id);
+  if (!theme) return;
+  try {
+    localStorage.setItem(MODE_STORAGE_KEY[theme.isDark ? 'dark' : 'light'], id);
+  } catch {
+    // storage blocked: the theme still applies for this page view
+  }
 }
 
-export function getDefaultTheme(): ThemeDefinition {
-  const savedId = getSavedTheme();
-  return getThemeById(savedId) || getThemeById(DEFAULT_THEME)!;
+// The theme last used in the given site mode, falling back to a legacy pick
+// that belongs to this mode, then to the mode's default.
+export function getThemeForMode(mode: ThemeMode): ThemeDefinition {
+  const isMode = (t: ThemeDefinition | undefined): t is ThemeDefinition =>
+    !!t && t.isDark === (mode === 'dark');
+  for (const key of [MODE_STORAGE_KEY[mode], LEGACY_STORAGE_KEY]) {
+    const saved = readStorage(key);
+    const theme = saved ? getThemeById(saved) : undefined;
+    if (isMode(theme)) return theme;
+  }
+  return getThemeById(DEFAULT_THEME[mode])!;
 }

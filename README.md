@@ -11,8 +11,8 @@ A real-time collaborative JavaScript code editor built for technical interviews,
 - **Shared Console** - Execute JavaScript code and view output together - everyone sees the results instantly
 - **Sandboxed Execution** - Code runs in an isolated iframe that can't touch the page, your storage, or the API
 - **Syntax Validation** - Catch syntax errors before running with accurate line numbers (powered by Acorn)
-- **Multiple Themes** - Choose from ~35 editor color schemes
-- **Persistent Sessions** - Code is saved automatically; rejoin anytime with the same URL
+- **Light & Dark Mode** - Toggle from the footer; the editor theme list (~40 themes) follows the mode
+- **Persistent Sessions** - Code is saved automatically; rejoin with the same URL (rooms untouched for 30 days are cleaned up — see `DOCUMENT_TTL_DAYS`)
 - **Room-based Sessions** - Share a unique URL to invite collaborators instantly
 - **Room Hosts** - The first person to set a password becomes the room's host, with a dashboard of per-user activity, the ability to remove users, and a "nuke" that wipes the room and moves everyone to a fresh one
 

@@ -1,5 +1,5 @@
 import { EditorView } from '@codemirror/view';
-import { EditorState, Compartment, Extension } from '@codemirror/state';
+import { EditorState, Compartment } from '@codemirror/state';
 import { javascript } from '@codemirror/lang-javascript';
 import {
   lineNumbers,
@@ -29,6 +29,8 @@ import { HocuspocusProvider } from '@hocuspocus/provider';
 import { Awareness } from 'y-protocols/awareness';
 import { getUserColor, getUserColorLight } from './username';
 import { sanitizeRemoteAwareness } from './sanitize';
+import { readableTextOn } from './colors';
+import type { ThemeDefinition } from './themes';
 
 export interface EditorConfig {
   container: HTMLElement;
@@ -38,7 +40,7 @@ export interface EditorConfig {
   // match this user to their activity stats across renames.
   clientId: string;
   wsUrl: string;
-  initialTheme: Extension;
+  initialTheme: ThemeDefinition;
   onFocus: () => void;
   onBlur: () => void;
   onKeystroke: () => void;
@@ -57,7 +59,7 @@ export interface CollabEditor {
   awareness: Awareness;
   destroy: () => void;
   updateUsername: (username: string) => void;
-  setTheme: (theme: Extension) => void;
+  setTheme: (theme: ThemeDefinition) => void;
 }
 
 export function createEditor(config: EditorConfig): CollabEditor {
@@ -74,7 +76,7 @@ export function createEditor(config: EditorConfig): CollabEditor {
 
   // Must be registered before yCollab: its 'change' listener renders remote
   // carets synchronously from the raw states, so they have to be clean first.
-  sanitizeRemoteAwareness(awareness);
+  const remoteSanitizer = sanitizeRemoteAwareness(awareness, initialTheme.isDark);
 
   // Create Hocuspocus provider with our awareness
   const provider = new HocuspocusProvider({
@@ -152,7 +154,7 @@ export function createEditor(config: EditorConfig): CollabEditor {
     extensions: [
       editorSetup,
       javascript(),
-      themeCompartment.of(initialTheme),
+      themeCompartment.of(initialTheme.extension),
       yCollab(ytext, awareness, { undoManager: new Y.UndoManager(ytext) }),
       keystrokeTracker,
       focusTracker,
@@ -164,6 +166,24 @@ export function createEditor(config: EditorConfig): CollabEditor {
     state,
     parent: container,
   });
+
+  // yCollab draws each remote caret's name label with fixed white text, which
+  // is unreadable on light user colors (yellow, cyan, green). Give each label
+  // whichever of dark/white text contrasts more with its caret color. Labels
+  // are recreated whenever a caret's color changes, so watching for added
+  // nodes is enough. (CodeMirror ignores mutations inside widgets.)
+  const labelObserver = new MutationObserver(() => {
+    view.contentDOM.querySelectorAll<HTMLElement>('.cm-ySelectionInfo').forEach((info) => {
+      const caretColor = info.parentElement?.style.backgroundColor;
+      if (!caretColor) return;
+      const text = readableTextOn(caretColor);
+      if (info.dataset.textOn !== caretColor) {
+        info.style.color = text;
+        info.dataset.textOn = caretColor;
+      }
+    });
+  });
+  labelObserver.observe(view.contentDOM, { childList: true, subtree: true });
 
   // Update function for username changes
   const updateUsername = (newUsername: string) => {
@@ -177,15 +197,19 @@ export function createEditor(config: EditorConfig): CollabEditor {
 
   // Cleanup function
   const destroy = () => {
+    labelObserver.disconnect();
     view.destroy();
     provider.disconnect();
     ydoc.destroy();
   };
 
   // Theme switching function
-  const setTheme = (theme: Extension) => {
+  const setTheme = (theme: ThemeDefinition) => {
+    // Re-light remote users' colors first; the reconfigure below makes
+    // yCollab rebuild its caret/selection decorations from them.
+    remoteSanitizer.setEditorDark(theme.isDark);
     view.dispatch({
-      effects: themeCompartment.reconfigure(theme),
+      effects: themeCompartment.reconfigure(theme.extension),
     });
   };
 

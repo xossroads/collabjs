@@ -1,3 +1,77 @@
+/* UI colors. Dark is the default (and matches the original palette); light
+   applies when <html data-mode="light">, set before first paint by
+   /mode.js and toggled from the footer (mode.ts). The Run and danger
+   buttons keep fixed colors: their white text works on both. */
+:root {
+  color-scheme: dark;
+  --bg: #1e1e1e;
+  --surface: #252526;
+  --surface-sunken: #1f1f20;
+  --border: #3c3c3c;
+  --border-strong: #4a4a4a;
+  --control: #3c3c3c;
+  --handle: #3c3c3c;
+  --handle-hover: #4a4a4a;
+  --hover: #2d2d2e;
+  --text: #d4d4d4;
+  --text-muted: #808080;
+  --text-subtle: #9d9d9d;
+  --text-faint: #707070;
+  --text-body: #a0a0a0;
+  --text-prose: #b0b0b0;
+  --accent: #569cd6;
+  --primary: #0e639c;
+  --selected: #094771;
+  --room-id: #ce9178;
+  --grip: #666;
+  --error: #f44747;
+  --error-soft: #f48771;
+  --error-border: #5a1d1d;
+  --warn: #cca700;
+  --info: #3dc9b0;
+  --gold-border: #c9a227;
+  --gold: #f5d76e;
+  --divider: #2a2a2b;
+  --overlay: rgba(0, 0, 0, 0.7);
+  --shadow: rgba(0, 0, 0, 0.5);
+}
+
+:root[data-mode="light"] {
+  color-scheme: light;
+  --bg: #ffffff;
+  --surface: #f3f3f3;
+  --surface-sunken: #f8f8f8;
+  /* Light-on-light edges read fainter than the same contrast on dark, so
+     these sit at ~2:1 (dark mode's are ~1.4:1). */
+  --border: #b5b5b5;
+  --border-strong: #969696;
+  --control: #e4e4e4;
+  --handle: #cfcfcf;
+  --handle-hover: #b5b5b5;
+  --hover: #e8e8e8;
+  --text: #1f1f1f;
+  --text-muted: #616161;
+  --text-subtle: #5c5c5c;
+  --text-faint: #6b6b6b;
+  --text-body: #4d4d4d;
+  --text-prose: #444444;
+  --accent: #005fb8;
+  --primary: #0e639c;
+  --selected: #0060c0;
+  --room-id: #a31515;
+  --grip: #a0a0a0;
+  --error: #cd3131;
+  --error-soft: #b4321e;
+  --error-border: #f0b8ae;
+  --warn: #8a6800;
+  --info: #0f7b6c;
+  --gold-border: #b8860b;
+  --gold: #7a5c00;
+  --divider: #e5e5e5;
+  --overlay: rgba(0, 0, 0, 0.35);
+  --shadow: rgba(0, 0, 0, 0.25);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -6,8 +80,8 @@
 
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--bg);
+  color: var(--text);
   height: 100vh;
   overflow: hidden;
 }
@@ -23,13 +97,13 @@ body {
   align-items: center;
   gap: 20px;
   padding: 10px 20px;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
 }
 
 #header h1 {
   font-size: 18px;
-  color: #569cd6;
+  color: var(--accent);
 }
 
 #user-info {
@@ -40,7 +114,8 @@ body {
 
 #username-display {
   padding: 4px 12px;
-  background: #0e639c;
+  background: var(--primary);
+  color: #ffffff;
   border-radius: 4px;
   font-weight: 500;
 }
@@ -48,23 +123,23 @@ body {
 #change-username {
   padding: 4px 8px;
   background: transparent;
-  border: 1px solid #3c3c3c;
-  color: #d4d4d4;
+  border: 1px solid var(--border);
+  color: var(--text);
   border-radius: 4px;
   cursor: pointer;
 }
 
 #change-username:hover {
-  background: #3c3c3c;
+  background: var(--control);
 }
 
 #room-info {
-  color: #808080;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
 #room-id {
-  color: #ce9178;
+  color: var(--room-id);
   font-family: monospace;
 }
 
@@ -72,39 +147,33 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: #808080;
+  color: var(--text-muted);
   font-size: 14px;
 }
 
 #theme-select {
   padding: 4px 8px;
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #d4d4d4;
+  color: var(--text);
   font-size: 13px;
   cursor: pointer;
   max-width: 180px;
 }
 
 #theme-select:hover {
-  border-color: #4a4a4a;
+  border-color: var(--border-strong);
 }
 
 #theme-select:focus {
   outline: none;
-  border-color: #0e639c;
-}
-
-#theme-select optgroup {
-  background: #252526;
-  color: #808080;
-  font-weight: 600;
+  border-color: var(--primary);
 }
 
 #theme-select option {
-  background: #1e1e1e;
-  color: #d4d4d4;
+  background: var(--bg);
+  color: var(--text);
   padding: 4px;
 }
 
@@ -155,10 +224,10 @@ body {
 #footer {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 6px 20px;
-  background: #252526;
-  border-top: 1px solid #3c3c3c;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
   font-size: 12px;
 }
 
@@ -167,13 +236,13 @@ body {
   align-items: center;
   gap: 6px;
   margin-top: 4px;
-  color: #808080;
+  color: var(--text-muted);
   text-decoration: none;
   transition: color 0.2s;
 }
 
 .about-github-link:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .about-github-link svg {
@@ -184,20 +253,22 @@ body {
   opacity: 1;
 }
 
+#mode-toggle,
 #about-btn {
   padding: 4px 12px;
   background: transparent;
-  border: 1px solid #3c3c3c;
-  color: #808080;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
   border-radius: 4px;
   cursor: pointer;
   font-size: 12px;
   transition: all 0.2s;
 }
 
+#mode-toggle:hover,
 #about-btn:hover {
-  background: #3c3c3c;
-  color: #d4d4d4;
+  background: var(--control);
+  color: var(--text);
 }
 
 #editor-container {
@@ -207,7 +278,7 @@ body {
 
 #resize-handle {
   width: 8px;
-  background: #3c3c3c;
+  background: var(--handle);
   cursor: col-resize;
   transition: background 0.2s;
   display: flex;
@@ -217,7 +288,7 @@ body {
 }
 
 #resize-handle:hover {
-  background: #4a4a4a;
+  background: var(--handle-hover);
 }
 
 /* Bottom dock: the handle spans horizontally and resizes height. */
@@ -232,8 +303,8 @@ body {
   height: 40px;
   background: repeating-linear-gradient(
     to bottom,
-    #666 0px,
-    #666 2px,
+    var(--grip) 0px,
+    var(--grip) 2px,
     transparent 2px,
     transparent 6px
   );
@@ -245,8 +316,8 @@ body {
   height: 4px;
   background: repeating-linear-gradient(
     to right,
-    #666 0px,
-    #666 2px,
+    var(--grip) 0px,
+    var(--grip) 2px,
     transparent 2px,
     transparent 6px
   );
@@ -267,7 +338,7 @@ body {
   min-width: 320px;
   display: flex;
   flex-direction: column;
-  background: #1e1e1e;
+  background: var(--bg);
   flex-shrink: 0;
 }
 
@@ -285,10 +356,10 @@ body {
   justify-content: space-between;
   align-items: center;
   padding: 8px 12px;
-  background: #252526;
-  border-bottom: 1px solid #3c3c3c;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
   font-size: 13px;
-  color: #808080;
+  color: var(--text-muted);
   flex-shrink: 0;
 }
 
@@ -306,8 +377,8 @@ body {
 #dock-toggle button {
   padding: 4px 9px;
   background: transparent;
-  border: 1px solid #3c3c3c;
-  color: #808080;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
   font-size: 14px;
   line-height: 1;
   cursor: pointer;
@@ -322,12 +393,12 @@ body {
 }
 
 #dock-toggle button:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 #dock-toggle button.active {
-  background: #3c3c3c;
-  color: #d4d4d4;
+  background: var(--control);
+  color: var(--text);
 }
 
 /* Console output body. Right dock stacks it as a column; bottom dock lays it
@@ -347,16 +418,16 @@ body {
 #clear-output {
   padding: 5px 13px;
   background: transparent;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 3px;
-  color: #808080;
+  color: var(--text-muted);
   font-size: 13px;
   cursor: pointer;
 }
 
 #clear-output:hover {
-  background: #3c3c3c;
-  color: #d4d4d4;
+  background: var(--control);
+  color: var(--text);
 }
 
 #output-content {
@@ -377,31 +448,31 @@ body {
 }
 
 .output-line.log {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .output-line.error {
-  color: #f44747;
+  color: var(--error);
 }
 
 .output-line.warn {
-  color: #cca700;
+  color: var(--warn);
 }
 
 .output-line.info {
-  color: #3dc9b0;
+  color: var(--info);
 }
 
 .output-line.result {
-  color: #808080;
+  color: var(--text-muted);
   font-style: italic;
 }
 
 .output-line.system {
-  color: #569cd6;
+  color: var(--accent);
   font-size: 12px;
   padding: 4px 0;
-  border-bottom: 1px solid #3c3c3c;
+  border-bottom: 1px solid var(--border);
   margin-bottom: 8px;
 }
 
@@ -410,8 +481,8 @@ body {
   font-size: 10px;
   padding: 1px 6px;
   border-radius: 3px;
-  background: #3c3c3c;
-  color: #d4d4d4;
+  background: var(--control);
+  color: var(--text);
   margin-right: 8px;
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
 }
@@ -423,7 +494,7 @@ body {
   left: 0;
   width: 100%;
   height: 100%;
-  background: rgba(0, 0, 0, 0.7);
+  background: var(--overlay);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -435,10 +506,10 @@ body {
 }
 
 .modal-content {
-  background: #252526;
+  background: var(--surface);
   padding: 30px;
   border-radius: 8px;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   min-width: 300px;
   max-width: 420px;
 }
@@ -460,8 +531,8 @@ body {
   display: flex;
   flex-direction: column;
   padding: 20px;
-  border-right: 1px solid #3c3c3c;
-  background: #1f1f20;
+  border-right: 1px solid var(--border);
+  background: var(--surface-sunken);
 }
 
 .dashboard-sidebar h2 {
@@ -481,7 +552,7 @@ body {
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.6px;
-  color: #9d9d9d;
+  color: var(--text-subtle);
 }
 
 .dashboard-user-list {
@@ -501,16 +572,16 @@ body {
   border-radius: 4px;
   cursor: pointer;
   font-size: 13px;
-  color: #d4d4d4;
+  color: var(--text);
   user-select: none;
 }
 
 .dashboard-user-list li:hover {
-  background: #2d2d2e;
+  background: var(--hover);
 }
 
 .dashboard-user-list li.selected {
-  background: #094771;
+  background: var(--selected);
   color: #ffffff;
 }
 
@@ -530,7 +601,7 @@ body {
 .dashboard-user-list .empty-state {
   padding: 6px 8px;
   font-size: 12px;
-  color: #707070;
+  color: var(--text-faint);
   font-style: italic;
   cursor: default;
 }
@@ -565,7 +636,7 @@ body {
 
 .dashboard-detail-empty {
   margin: 0;
-  color: #9d9d9d;
+  color: var(--text-subtle);
   font-size: 13px;
   font-style: italic;
 }
@@ -573,10 +644,10 @@ body {
 .dashboard-detail-error {
   margin-top: 16px;
   padding: 12px 14px;
-  background: #1e1e1e;
-  border: 1px dashed #5a1d1d;
+  background: var(--bg);
+  border: 1px dashed var(--error-border);
   border-radius: 6px;
-  color: #f48771;
+  color: var(--error-soft);
   font-size: 12px;
 }
 
@@ -590,37 +661,37 @@ body {
   align-items: baseline;
   gap: 12px;
   padding: 7px 0;
-  border-bottom: 1px solid #2a2a2b;
+  border-bottom: 1px solid var(--divider);
   font-size: 13px;
 }
 
 .dashboard-stats dt {
-  color: #9d9d9d;
+  color: var(--text-subtle);
 }
 
 .dashboard-stats dd {
   margin: 0;
-  color: #d4d4d4;
+  color: var(--text);
   font-variant-numeric: tabular-nums;
 }
 
 .stat-share-bar {
   margin-top: 14px;
   height: 6px;
-  background: #2d2d2e;
+  background: var(--hover);
   border-radius: 3px;
   overflow: hidden;
 }
 
 .stat-share-fill {
   height: 100%;
-  background: #0e639c;
+  background: var(--primary);
   border-radius: 3px;
 }
 
 .dashboard-detail-note {
   margin-top: 8px;
-  color: #707070;
+  color: var(--text-faint);
   font-size: 11px;
 }
 
@@ -630,14 +701,14 @@ body {
   padding: 0;
   background: none;
   border: none;
-  color: #9d9d9d;
+  color: var(--text-subtle);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
 }
 
 .dashboard-back:hover {
-  color: #d4d4d4;
+  color: var(--text);
 }
 
 .dashboard-kick {
@@ -661,7 +732,7 @@ body {
 }
 
 #kicked-new-room {
-  background: #0e639c;
+  background: var(--primary);
   color: white;
 }
 
@@ -673,17 +744,17 @@ body {
 .modal-content input {
   width: 100%;
   padding: 10px;
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #d4d4d4;
+  color: var(--text);
   font-size: 14px;
   margin-bottom: 15px;
 }
 
 .modal-content input:focus {
   outline: none;
-  border-color: #0e639c;
+  border-color: var(--primary);
 }
 
 .modal-buttons {
@@ -708,14 +779,14 @@ body {
 #random-name-btn,
 #host-claim-skip,
 #host-login-cancel {
-  background: #3c3c3c;
-  color: #d4d4d4;
+  background: var(--control);
+  color: var(--text);
 }
 
 #save-name-btn,
 #host-claim-submit,
 #host-login-submit {
-  background: #0e639c;
+  background: var(--primary);
   color: white;
 }
 
@@ -725,8 +796,8 @@ body {
 #host-nuke-cancel,
 #host-logout-all-cancel,
 #host-logout-all-confirm {
-  background: #3c3c3c;
-  color: #d4d4d4;
+  background: var(--control);
+  color: var(--text);
 }
 
 .modal-buttons button.danger {
@@ -741,22 +812,22 @@ body {
 #host-btn {
   padding: 4px 10px;
   background: transparent;
-  border: 1px solid #3c3c3c;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  color: #d4d4d4;
+  color: var(--text);
   cursor: pointer;
   font-size: 13px;
 }
 
 #host-btn:hover {
-  background: #3c3c3c;
+  background: var(--control);
 }
 
 /* Authed-as-host state: subtle gold accent so it's visually distinct from
    the "log in" state without being garish. */
 #host-btn.is-host {
-  border-color: #c9a227;
-  color: #f5d76e;
+  border-color: var(--gold-border);
+  color: var(--gold);
 }
 
 #host-btn.hidden {
@@ -765,14 +836,14 @@ body {
 
 .modal-content p {
   font-size: 13px;
-  color: #a0a0a0;
+  color: var(--text-body);
   line-height: 1.4;
   margin-bottom: 16px;
 }
 
 .modal-error {
   font-size: 13px;
-  color: #f48771;
+  color: var(--error-soft);
   margin-bottom: 12px;
   min-height: 1em;
 }
@@ -812,6 +883,17 @@ body {
   z-index: 0;
 }
 
+/* In light mode the (mostly dark) artwork only adds a grey wash at 15%, so
+   it's raised to 30% — the most that still keeps body text >= 4.5:1 over its
+   darkest pixels. Headings get a deeper blue to stay readable on top. */
+:root[data-mode="light"] .about-content::before {
+  opacity: 0.3;
+}
+
+:root[data-mode="light"] .about-content h3 {
+  color: #00437f;
+}
+
 .about-content > * {
   position: relative;
   z-index: 1;
@@ -837,17 +919,17 @@ body {
   margin-top: 20px;
   margin-bottom: 10px;
   font-size: 14px;
-  color: #569cd6;
+  color: var(--accent);
 }
 
 .about-content p {
-  color: #b0b0b0;
+  color: var(--text-prose);
   line-height: 1.5;
 }
 
 .about-content ul {
   margin-left: 20px;
-  color: #b0b0b0;
+  color: var(--text-prose);
   line-height: 1.8;
 }
 
@@ -860,14 +942,14 @@ kbd {
   padding: 2px 6px;
   font-family: 'Fira Code', 'Consolas', monospace;
   font-size: 11px;
-  background: #1e1e1e;
-  border: 1px solid #3c3c3c;
+  background: var(--bg);
+  border: 1px solid var(--border);
   border-radius: 3px;
-  box-shadow: 0 1px 0 #3c3c3c;
+  box-shadow: 0 1px 0 var(--border);
 }
 
 #close-about-btn {
-  background: #0e639c;
+  background: var(--primary);
   color: white;
 }
 
@@ -884,14 +966,6 @@ kbd {
   white-space: nowrap;
   pointer-events: none;
   z-index: 100;
-}
-
-.cm-ySelection {
-  opacity: 0.3;
-}
-
-.cm-yLineSelection {
-  opacity: 0.15;
 }
 
 .cm-yCursor {
@@ -912,7 +986,7 @@ kbd {
 }
 
 .remote-cursor svg {
-  filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.5));
+  filter: drop-shadow(0 1px 2px var(--shadow));
 }
 
 .cursor-label {

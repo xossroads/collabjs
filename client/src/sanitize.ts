@@ -11,6 +11,7 @@
 // validate at consumption.
 
 import type { Awareness } from 'y-protocols/awareness';
+import { themedUserColors } from './colors';
 
 const NAME_MAX_LEN = 64;
 const FALLBACK_NAME = 'unknown';
@@ -93,18 +94,70 @@ function isSafeCursor(value: unknown): boolean {
 // emits 'change' to listeners in registration order, and yCollab renders
 // synchronously from its listener. Remote state objects are never
 // re-broadcast by us, so mutating them is safe.
-export function sanitizeRemoteAwareness(awareness: Awareness): void {
+//
+// While here, each user's colors are re-lit for this viewer's editor theme
+// (see themedUserColors). setEditorDark re-applies that to everyone when the
+// theme changes.
+export interface RemoteAwarenessSanitizer {
+  setEditorDark(isDark: boolean): void;
+}
+
+export function sanitizeRemoteAwareness(
+  awareness: Awareness,
+  editorIsDark: boolean
+): RemoteAwarenessSanitizer {
+  let dark = editorIsDark;
+  // Each peer's validated color as they sent it, so a theme change can
+  // re-derive from the original rather than from an already-adapted color.
+  const baseColors = new Map<number, string>();
+  // States already rewritten. setEditorDark re-emits 'change' with the same
+  // state objects so every renderer refreshes; those must not be re-read as
+  // fresh input. A real update from the peer arrives as a new object.
+  const processed = new WeakSet<object>();
+
+  const applyTheme = (id: number, state: Record<string, unknown>) => {
+    const base = baseColors.get(id);
+    if (base === undefined || !state.user) return;
+    state.user = { ...(state.user as SafeUser), ...themedUserColors(base, dark) };
+  };
+
   awareness.on(
     'change',
-    ({ added, updated }: { added: number[]; updated: number[] }) => {
+    ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
+      for (const id of removed) baseColors.delete(id);
       const states = awareness.getStates();
       for (const id of [...added, ...updated]) {
         if (id === awareness.clientID) continue;
         const state = states.get(id);
-        if (!state) continue;
-        if ('user' in state) state.user = sanitizeRemoteUser(state.user);
+        if (!state || processed.has(state)) continue;
+        processed.add(state);
+        if ('user' in state) {
+          const user = sanitizeRemoteUser(state.user);
+          baseColors.set(id, user.color);
+          state.user = user;
+          applyTheme(id, state);
+        }
         if (!isSafeCursor(state.cursor)) delete state.cursor;
       }
     }
   );
+
+  return {
+    setEditorDark(isDark: boolean) {
+      if (isDark === dark) return;
+      dark = isDark;
+      const ids: number[] = [];
+      awareness.getStates().forEach((state, id) => {
+        if (id === awareness.clientID || !baseColors.has(id)) return;
+        applyTheme(id, state);
+        ids.push(id);
+      });
+      // Local-only nudge so carets, badges and mouse cursors redraw with
+      // the new colors. Providers broadcast on 'update', not 'change', so
+      // nothing goes over the wire.
+      if (ids.length > 0) {
+        awareness.emit('change', [{ added: [], updated: ids, removed: [] }, 'local']);
+      }
+    },
+  };
 }

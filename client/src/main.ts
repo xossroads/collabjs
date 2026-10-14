@@ -15,11 +15,13 @@ import {
 } from './awareness';
 import type { Awareness } from 'y-protocols/awareness';
 import {
-  THEMES,
   getThemeById,
-  getDefaultTheme,
+  getThemeForMode,
+  getThemesForMode,
   saveTheme,
+  type ThemeMode,
 } from './themes';
+import { getMode, setupModeToggle } from './mode';
 import {
   fetchHostStatus,
   claimHost,
@@ -86,33 +88,21 @@ async function init() {
   usernameDisplay.textContent = username;
   roomIdDisplay.textContent = roomId;
 
-  // Populate theme selector
-  const darkThemes = THEMES.filter(t => t.isDark);
-  const lightThemes = THEMES.filter(t => !t.isDark);
+  // Theme selector: only the current site mode's themes are offered, so a
+  // light page never wraps a dark editor (or vice versa). Rebuilt on toggle.
+  const populateThemeSelect = (mode: ThemeMode) => {
+    themeSelect.replaceChildren(
+      ...getThemesForMode(mode).map((theme) => {
+        const option = document.createElement('option');
+        option.value = theme.id;
+        option.textContent = theme.name;
+        return option;
+      })
+    );
+  };
 
-  const darkGroup = document.createElement('optgroup');
-  darkGroup.label = 'Dark Themes';
-  darkThemes.forEach(theme => {
-    const option = document.createElement('option');
-    option.value = theme.id;
-    option.textContent = theme.name;
-    darkGroup.appendChild(option);
-  });
-
-  const lightGroup = document.createElement('optgroup');
-  lightGroup.label = 'Light Themes';
-  lightThemes.forEach(theme => {
-    const option = document.createElement('option');
-    option.value = theme.id;
-    option.textContent = theme.name;
-    lightGroup.appendChild(option);
-  });
-
-  themeSelect.appendChild(darkGroup);
-  themeSelect.appendChild(lightGroup);
-
-  // Set initial theme from localStorage
-  const initialTheme = getDefaultTheme();
+  const initialTheme = getThemeForMode(getMode());
+  populateThemeSelect(getMode());
   themeSelect.value = initialTheme.id;
 
   // Activity tracker (editor only)
@@ -149,7 +139,7 @@ async function init() {
     username,
     clientId,
     wsUrl,
-    initialTheme: initialTheme.extension,
+    initialTheme,
     onFocus: () => {},
     onBlur: () => {},
     onKeystroke: () => activityTracker.recordKeystroke(),
@@ -193,12 +183,21 @@ async function init() {
   });
 
   // Theme change handler
+  const applyTheme = (theme: typeof initialTheme) => {
+    themeSelect.value = theme.id;
+    editor.setTheme(theme);
+    saveTheme(theme.id);
+  };
   themeSelect.addEventListener('change', () => {
     const theme = getThemeById(themeSelect.value);
-    if (theme) {
-      editor.setTheme(theme.extension);
-      saveTheme(theme.id);
-    }
+    if (theme) applyTheme(theme);
+  });
+
+  // Site light/dark toggle (footer). The editor follows: switching modes
+  // swaps the picker to that mode's themes and brings back the one last used.
+  setupModeToggle(document.getElementById('mode-toggle') as HTMLButtonElement, (mode) => {
+    populateThemeSelect(mode);
+    applyTheme(getThemeForMode(mode));
   });
 
   // Create shared console (synced via Y.js)
