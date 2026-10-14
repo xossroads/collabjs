@@ -139,7 +139,7 @@ connectDatabase();
 startCleanupJob(() => dbAvailable);
 
 // Hocuspocus server with PostgreSQL persistence
-const hocuspocus = Server.configure({
+const server = new Server({
   debounce: 2000,
   maxDebounce: 10000,
 
@@ -194,7 +194,7 @@ const hocuspocus = Server.configure({
     });
   },
 
-  async onConnect({ documentName, request, requestHeaders, requestParameters, socketId }) {
+  async onConnect({ documentName, request, requestHeaders, socketId }) {
     const ip = getClientIp(request, requestHeaders);
 
     // Reject malformed document names. Throwing rejects the connection.
@@ -211,22 +211,6 @@ const hocuspocus = Server.configure({
       throw new Error('Room is being deleted');
     }
 
-    // The client identifies itself with its localStorage UUID as a query
-    // param on the WS URL. Missing/malformed just means this connection
-    // can't be targeted by a kick — old clients keep working.
-    //
-    // Note this ban check is only a fast-path socket close: the provider
-    // sends an Auth message first, and Hocuspocus establishes that path
-    // concurrently with onConnect, so a throw here can lose the race. The
-    // authoritative, race-free rejection is in onAuthenticate below.
-    const clientId = clientIdFromParams(requestParameters);
-    if (clientId && isKickBanned(documentName, clientId)) {
-      console.warn(
-        `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId} ip=${sanitizeForLog(ip)}`
-      );
-      throw new Error('Kicked');
-    }
-
     console.log(
       `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${wsConnectionsByIp.get(ip) ?? 0}`
     );
@@ -235,15 +219,20 @@ const hocuspocus = Server.configure({
   // The provider always sends an Auth message (empty token) right after the
   // socket opens, and this hook runs sequentially in that path — a throw
   // here reliably prevents the connection from ever being established (no
-  // awareness applied, nothing broadcast). This is where the kick ban is
-  // actually enforced.
+  // awareness applied, nothing broadcast). Rejections here also reach the
+  // client as a permission-denied `reason` instead of a socket close, so it
+  // can show a message rather than reconnecting forever.
+  //
+  // The client identifies itself with its localStorage UUID as a query
+  // param on the WS URL. Missing/malformed just means this connection
+  // can't be targeted by a kick — old clients keep working.
   async onAuthenticate({ documentName, requestParameters }) {
     const clientId = clientIdFromParams(requestParameters);
     if (clientId && isKickBanned(documentName, clientId)) {
       console.warn(
-        `WS reject (kicked, auth) room=${sanitizeForLog(documentName)} clientId=${clientId}`
+        `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId}`
       );
-      throw new Error('Kicked');
+      throw Object.assign(new Error('Kicked'), { reason: 'kicked' });
     }
 
     // A nuked room stays dead. Without this, a client that missed the
@@ -281,6 +270,7 @@ const hocuspocus = Server.configure({
     );
   },
 });
+const hocuspocus = server.hocuspocus;
 
 // Express app setup
 const app = express();
@@ -828,6 +818,6 @@ app.listen(API_PORT, () => {
   console.log(`REST API running on http://localhost:${API_PORT}`);
 });
 
-hocuspocus.listen(PORT).then(() => {
+server.listen(PORT).then(() => {
   console.log(`Hocuspocus WebSocket server running on ws://localhost:${PORT}`);
 });

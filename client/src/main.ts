@@ -135,6 +135,14 @@ async function init() {
   // arrive before then (vanishingly unlikely — page just loaded) are ignored.
   const onHostStateChangedRef: { current: (() => void) | null } = { current: null };
 
+  // Tear down so the provider doesn't keep reconnecting into the ban, then
+  // show the (non-dismissable) overlay.
+  const showKicked = () => {
+    activityTracker.destroy();
+    editor.destroy();
+    document.getElementById('kicked-overlay')!.classList.remove('hidden');
+  };
+
   let editor: CollabEditor = createEditor({
     container: editorContainer,
     roomId,
@@ -158,11 +166,8 @@ async function init() {
         window.location.replace(`/room/${msg.nextRoomId}`);
       } else if (msg.type === 'kicked') {
         // The host removed us. Tear down before the server closes the
-        // socket so the provider doesn't auto-reconnect into the ban, then
-        // show the (non-dismissable) overlay.
-        activityTracker.destroy();
-        editor.destroy();
-        document.getElementById('kicked-overlay')!.classList.remove('hidden');
+        // socket.
+        showKicked();
       } else if (msg.type === 'host-state-changed') {
         // Claim/login/logout-all happened somewhere. Re-fetch and reconcile
         // UI live so other tabs don't keep showing stale state until reload.
@@ -170,6 +175,12 @@ async function init() {
       }
     },
     onAuthenticationFailed: (reason) => {
+      // Still inside a kick ban (e.g. reloaded after being removed). Without
+      // this the editor sat there retrying with no explanation.
+      if (reason === 'kicked') {
+        showKicked();
+        return;
+      }
       // This room was nuked while we were away (asleep, offline, or opened
       // from an old link). Follow the group to the room it moved to, the
       // same way a live room-nuked message does.
@@ -228,9 +239,9 @@ async function init() {
   const DOCK_KEY = 'collabjs_panel_dock';
   const WIDTH_KEY = 'collabjs_panel_width';
   const HEIGHT_KEY = 'collabjs_panel_height';
-  const MIN_WIDTH = 320; // must clear the 300px ad
+  const MIN_WIDTH = 320; // keeps the header's title and buttons on one row
   const MAX_WIDTH = 800;
-  const MIN_HEIGHT = 290; // header + 250px ad
+  const MIN_HEIGHT = 120; // header plus a few lines of output
   type Dock = 'right' | 'bottom';
 
   const readSize = (key: string, fallback: number, min: number, max: number) => {

@@ -272,12 +272,12 @@ body {
 }
 
 /* Bottom dock: the panel is a full-width strip; height (not width) is what
-   varies, and it must clear the 250px-tall ad plus the header. */
+   varies. min-height mirrors MIN_HEIGHT in main.ts. */
 .dock-bottom #output-panel {
   width: auto;
   min-width: 0;
   height: 340px;
-  min-height: 290px;
+  min-height: 120px;
 }
 
 #output-header {

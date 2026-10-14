@@ -24,13 +24,29 @@ function readNumberEnv(name: string, defaultValue: number): number {
   return n;
 }
 
+// setInterval stores its delay as a signed 32-bit ms count; anything larger
+// (~596h) is silently replaced with 1ms, which would run cleanup in a hot
+// loop. Clamp to the largest delay Node accepts.
+const MAX_INTERVAL_HOURS = Math.floor((2 ** 31 - 1) / (60 * 60 * 1000));
+
 function readConfig(): CleanupConfig {
   return {
     documentTtlDays: readNumberEnv('DOCUMENT_TTL_DAYS', 30),
     activityLogTtlDays: readNumberEnv('ACTIVITY_LOG_TTL_DAYS', 90),
     userTtlDays: readNumberEnv('USER_TTL_DAYS', 90),
-    intervalHours: readNumberEnv('CLEANUP_INTERVAL_HOURS', 24),
+    intervalHours: readIntervalHours(),
   };
+}
+
+function readIntervalHours(): number {
+  const hours = readNumberEnv('CLEANUP_INTERVAL_HOURS', 24);
+  if (hours > MAX_INTERVAL_HOURS) {
+    console.warn(
+      `CLEANUP_INTERVAL_HOURS=${hours} exceeds the timer limit, using ${MAX_INTERVAL_HOURS}`
+    );
+    return MAX_INTERVAL_HOURS;
+  }
+  return hours;
 }
 
 async function runOnce(config: CleanupConfig): Promise<void> {
