@@ -183,12 +183,19 @@ export async function purgeExpiredHostSessions(): Promise<number> {
 }
 
 // Wipe everything for a single room: document state, activity logs, host
-// record (cascade-deletes its sessions). Run inside a single transaction
-// so a failure mid-way doesn't leave a half-deleted room behind.
-export async function deleteRoom(roomId: string): Promise<void> {
+// record (cascade-deletes its sessions), and leave a tombstone pointing at
+// the successor room. Run inside a single transaction so a failure mid-way
+// doesn't leave a half-deleted room behind.
+export async function deleteRoom(roomId: string, nextRoomId: string): Promise<void> {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    await client.query(
+      `INSERT INTO deleted_rooms (room_id, next_room_id)
+       VALUES ($1, $2)
+       ON CONFLICT (room_id) DO NOTHING`,
+      [roomId, nextRoomId]
+    );
     await client.query('DELETE FROM activity_logs WHERE room_id = $1', [roomId]);
     await client.query('DELETE FROM documents WHERE room_id = $1', [roomId]);
     // host_sessions cascade-deletes via the FK on room_hosts.
@@ -200,6 +207,15 @@ export async function deleteRoom(roomId: string): Promise<void> {
   } finally {
     client.release();
   }
+}
+
+// The successor room id if this room was nuked, else null.
+export async function getDeletedRoomSuccessor(roomId: string): Promise<string | null> {
+  const result = await pool.query(
+    'SELECT next_room_id FROM deleted_rooms WHERE room_id = $1',
+    [roomId]
+  );
+  return result.rows[0]?.next_room_id ?? null;
 }
 
 // --- TTL purges ---------------------------------------------------------
@@ -218,6 +234,14 @@ export async function purgeStaleDocuments(maxAgeDays: number): Promise<number> {
 export async function purgeOldActivityLogs(maxAgeDays: number): Promise<number> {
   const result = await pool.query(
     `DELETE FROM activity_logs WHERE recorded_at < NOW() - ($1::int * INTERVAL '1 day')`,
+    [maxAgeDays]
+  );
+  return result.rowCount ?? 0;
+}
+
+export async function purgeOldTombstones(maxAgeDays: number): Promise<number> {
+  const result = await pool.query(
+    `DELETE FROM deleted_rooms WHERE deleted_at < NOW() - ($1::int * INTERVAL '1 day')`,
     [maxAgeDays]
   );
   return result.rowCount ?? 0;

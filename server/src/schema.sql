@@ -63,3 +63,15 @@ CREATE TABLE IF NOT EXISTS host_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_host_sessions_room ON host_sessions(room_id);
 CREATE INDEX IF NOT EXISTS idx_host_sessions_expires ON host_sessions(expires_at);
+
+-- Tombstones for rooms a host nuked. A client that missed the room-nuked
+-- broadcast (asleep, offline) would otherwise reconnect later, re-sync its
+-- pre-nuke Y.Doc into the empty server doc, and find the room unclaimed.
+-- next_room_id is where the group went, so a late client can follow it.
+-- Purged on the same TTL as documents.
+CREATE TABLE IF NOT EXISTS deleted_rooms (
+  room_id VARCHAR(255) PRIMARY KEY,
+  next_room_id VARCHAR(255) NOT NULL,
+  deleted_at TIMESTAMP DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_deleted_rooms_deleted ON deleted_rooms(deleted_at);

@@ -27,7 +27,8 @@ import { yCollab } from 'y-codemirror.next';
 import * as Y from 'yjs';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 import { Awareness } from 'y-protocols/awareness';
-import { getUserColor } from './username';
+import { getUserColor, getUserColorLight } from './username';
+import { sanitizeRemoteAwareness } from './sanitize';
 
 export interface EditorConfig {
   container: HTMLElement;
@@ -44,6 +45,9 @@ export interface EditorConfig {
   // Optional: receive Hocuspocus stateless messages broadcast from the
   // server. Used by the host flow for room-level events like "room-nuked".
   onStateless?: (payload: string) => void;
+  // Optional: the server refused this connection in onAuthenticate. The
+  // reason is the server's permission-denied string (e.g. a deleted room).
+  onAuthenticationFailed?: (reason: string) => void;
 }
 
 export interface CollabEditor {
@@ -57,7 +61,7 @@ export interface CollabEditor {
 }
 
 export function createEditor(config: EditorConfig): CollabEditor {
-  const { container, roomId, username, clientId, wsUrl, initialTheme, onFocus, onBlur, onKeystroke, onStateless } = config;
+  const { container, roomId, username, clientId, wsUrl, initialTheme, onFocus, onBlur, onKeystroke, onStateless, onAuthenticationFailed } = config;
 
   // Theme compartment for dynamic theme switching
   const themeCompartment = new Compartment();
@@ -68,6 +72,10 @@ export function createEditor(config: EditorConfig): CollabEditor {
   // Create awareness before provider
   const awareness = new Awareness(ydoc);
 
+  // Must be registered before yCollab: its 'change' listener renders remote
+  // carets synchronously from the raw states, so they have to be clean first.
+  sanitizeRemoteAwareness(awareness);
+
   // Create Hocuspocus provider with our awareness
   const provider = new HocuspocusProvider({
     url: wsUrl,
@@ -77,15 +85,18 @@ export function createEditor(config: EditorConfig): CollabEditor {
     onStateless: onStateless
       ? ({ payload }) => onStateless(payload)
       : undefined,
+    onAuthenticationFailed: onAuthenticationFailed
+      ? ({ reason }) => onAuthenticationFailed(reason)
+      : undefined,
   });
 
   const ytext = ydoc.getText('codemirror');
 
   // Set initial awareness state (y-codemirror.next expects 'name' and 'color')
-  const color = getUserColor(username);
   awareness.setLocalStateField('user', {
     name: username,
-    color: color,
+    color: getUserColor(username),
+    colorLight: getUserColorLight(username),
     clientId: clientId,
   });
 
@@ -156,10 +167,10 @@ export function createEditor(config: EditorConfig): CollabEditor {
 
   // Update function for username changes
   const updateUsername = (newUsername: string) => {
-    const newColor = getUserColor(newUsername);
     awareness.setLocalStateField('user', {
       name: newUsername,
-      color: newColor,
+      color: getUserColor(newUsername),
+      colorLight: getUserColorLight(newUsername),
       clientId: clientId,
     });
   };

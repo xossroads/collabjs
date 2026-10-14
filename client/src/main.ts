@@ -27,6 +27,7 @@ import {
   nukeRoom,
   logoutAllHostSessions,
   parseHostStatelessMessage,
+  parseRoomDeletedReason,
   getStoredHostToken,
   storeHostToken,
   clearHostToken,
@@ -166,6 +167,16 @@ async function init() {
         // Claim/login/logout-all happened somewhere. Re-fetch and reconcile
         // UI live so other tabs don't keep showing stale state until reload.
         onHostStateChangedRef.current?.();
+      }
+    },
+    onAuthenticationFailed: (reason) => {
+      // This room was nuked while we were away (asleep, offline, or opened
+      // from an old link). Follow the group to the room it moved to, the
+      // same way a live room-nuked message does.
+      const nextRoomId = parseRoomDeletedReason(reason);
+      if (nextRoomId) {
+        clearHostToken(roomId);
+        window.location.replace(`/room/${nextRoomId}`);
       }
     },
   });

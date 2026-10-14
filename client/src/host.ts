@@ -240,6 +240,15 @@ export function parseHostStatelessMessage(payload: string): HostStatelessMessage
   }
 }
 
+// The server refuses connections to a nuked room in onAuthenticate with the
+// reason "room-deleted:<nextRoomId>" — the room the group moved to. Returns
+// that id (validated, since it drives navigation), or null for any other
+// reason.
+export function parseRoomDeletedReason(reason: string): string | null {
+  const match = /^room-deleted:(.+)$/.exec(reason);
+  return match && ROOM_ID_RE.test(match[1]) ? match[1] : null;
+}
+
 export type KickResult = { ok: true } | HostActionFailure;
 
 export async function kickUser(

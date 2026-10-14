@@ -3,6 +3,7 @@ import {
   purgeOldActivityLogs,
   purgeStaleUsers,
   purgeExpiredHostSessions,
+  purgeOldTombstones,
 } from './database.js';
 
 interface CleanupConfig {
@@ -39,6 +40,12 @@ async function runOnce(config: CleanupConfig): Promise<void> {
     tasks.push([
       `documents older than ${config.documentTtlDays}d`,
       () => purgeStaleDocuments(config.documentTtlDays),
+    ]);
+    // Nuked-room tombstones share the document TTL: past it, the room's
+    // content would have been purged anyway.
+    tasks.push([
+      `deleted-room tombstones older than ${config.documentTtlDays}d`,
+      () => purgeOldTombstones(config.documentTtlDays),
     ]);
   }
   if (config.activityLogTtlDays > 0) {

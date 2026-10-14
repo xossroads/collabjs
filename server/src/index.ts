@@ -20,6 +20,7 @@ import {
   getHostSession,
   revokeAllHostSessions,
   deleteRoom,
+  getDeletedRoomSuccessor,
   getRoomActivityStats,
 } from './database.js';
 import { startCleanupJob } from './cleanup.js';
@@ -243,6 +244,23 @@ const hocuspocus = Server.configure({
         `WS reject (kicked, auth) room=${sanitizeForLog(documentName)} clientId=${clientId}`
       );
       throw new Error('Kicked');
+    }
+
+    // A nuked room stays dead. Without this, a client that missed the
+    // room-nuked broadcast reconnects later and re-syncs its pre-nuke Y.Doc
+    // into the empty server doc. The reason reaches the client as a
+    // permission-denied message ("room-deleted:<next>") so it can follow the
+    // group to the successor room.
+    if (dbAvailable) {
+      const nextRoomId = await getDeletedRoomSuccessor(documentName);
+      if (nextRoomId) {
+        console.warn(
+          `WS reject (room deleted) room=${sanitizeForLog(documentName)} next=${sanitizeForLog(nextRoomId)}`
+        );
+        throw Object.assign(new Error('Room deleted'), {
+          reason: `room-deleted:${nextRoomId}`,
+        });
+      }
     }
   },
 
@@ -539,6 +557,11 @@ app.post('/api/rooms/:id/claim', async (req, res) => {
   }
 
   try {
+    // A nuked room can't be re-claimed; its group has moved on.
+    if (await getDeletedRoomSuccessor(roomId)) {
+      return res.status(410).json({ error: 'Room was deleted' });
+    }
+
     const passwordHash = await hashPassword(password);
     const won = await tryClaimRoomHost(roomId, passwordHash);
     if (!won) {
@@ -731,7 +754,9 @@ app.post('/api/rooms/:id/host/kick', requireHost, async (req: HostRequest, res) 
 // Nuke the room. Wipes Y.js state, activity logs, the host record (which
 // cascade-clears all session tokens), and force-disconnects every connected
 // client. The roomsBeingNuked guard keeps a reconnecting client or the
-// final unloadDocument save from re-creating rows we're deleting.
+// final unloadDocument save from re-creating rows while the delete runs;
+// after that, the deleted_rooms tombstone (checked in onAuthenticate and
+// claim) keeps the room dead for clients that missed the broadcast.
 //
 // Before kicking connections, we broadcast a stateless "nuked" message so
 // any other open tabs in the room can reload and drop their local Y.Doc
@@ -767,7 +792,7 @@ app.delete('/api/rooms/:id', requireHost, async (req: HostRequest, res) => {
     }
 
     // 3. Wipe DB rows transactionally.
-    await deleteRoom(roomId);
+    await deleteRoom(roomId, nextRoomId);
 
     console.log(
       `HOST nuke room=${sanitizeForLog(roomId)} next=${sanitizeForLog(nextRoomId)}`
