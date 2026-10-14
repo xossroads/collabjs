@@ -23,6 +23,7 @@ const CARET_LIGHTNESS_ON_LIGHT = 28;
 // The selection tint stays a mid-tone: a bright tint on a dark theme (or a
 // dark one on a light theme) costs the code text under it too much contrast.
 const HIGHLIGHT_LIGHTNESS = 50;
+const MAX_SATURATION = 70;
 const HIGHLIGHT_ALPHA = 0.2;
 
 function rgbToHsl([r, g, b]: Rgb): Hsl {
@@ -97,7 +98,10 @@ export function themedUserColors(
   const rgb = parseRgb(color);
   const { h, s } = rgb ? rgbToHsl(rgb) : { h: 0, s: 0 };
   const hue = Math.round(h) % 360;
-  const sat = Math.round(s);
+  // Capped at the saturation clients generate (70%): the lightness levels
+  // and the per-theme label text color were measured for it, and a fully
+  // saturated custom color could fall below 4.5:1 for its label.
+  const sat = Math.min(Math.round(s), MAX_SATURATION);
   const l = editorIsDark ? CARET_LIGHTNESS_ON_DARK : CARET_LIGHTNESS_ON_LIGHT;
   return {
     color: `hsl(${hue}, ${sat}%, ${l}%)`,

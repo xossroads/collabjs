@@ -60,10 +60,3 @@ export function getUserColor(username: string): string {
   const hue = Math.abs(hash % 360);
   return `hsl(${hue}, 70%, 50%)`;
 }
-
-// Translucent variant for remote selection highlights. y-codemirror.next
-// defaults to `color + '33'`, which only works for 6-digit hex and yields
-// invalid CSS for our hsl() colors — so selections never showed.
-export function getUserColorLight(username: string): string {
-  return getUserColor(username).replace(/^hsl\((.*)\)$/, 'hsla($1, 0.2)');
-}

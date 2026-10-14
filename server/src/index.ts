@@ -65,6 +65,23 @@ const MAX_WS_PER_IP = (() => {
 })();
 const wsConnectionsByIp = new Map<string, number>();
 
+// Per-socket cap on rooms. Hocuspocus multiplexes documents over one socket,
+// so the per-IP socket cap alone doesn't bound how many rooms a client can
+// load into memory: one socket could auth into thousands. The client opens
+// one room per socket; 4 leaves headroom. Keyed by the upgrade request,
+// which Hocuspocus passes to every hook for that socket, so the entry is
+// collected with the socket — no cleanup path to get wrong.
+const MAX_ROOMS_PER_SOCKET = 4;
+const roomsBySocket = new WeakMap<object, Set<string>>();
+
+// Reject a connection from onConnect/onAuthenticate. Under Hocuspocus 3 both
+// run in the auth step, so a throw becomes a permission-denied message
+// carrying `reason` (the socket stays open). The client acts on the reasons
+// it knows ('kicked', 'room-deleted:<next>') and retries anything else.
+function denyConnection(message: string, reason: string): never {
+  throw Object.assign(new Error(message), { reason });
+}
+
 // Kick bans, keyed "roomId:clientId" → expiry epoch ms. In-memory (single
 // process) and best-effort: clientId is the client's localStorage UUID, so
 // clearing localStorage evades the ban. Entries are lazily purged on lookup.
@@ -177,8 +194,8 @@ const server = new Server({
       console.warn(
         `WS reject (over per-IP cap) ip=${sanitizeForLog(ip)} cap=${MAX_WS_PER_IP}`
       );
+      // end() flushes the 429 before closing; destroy() would drop it.
       socket.end('HTTP/1.1 429 Too Many Requests\r\nConnection: close\r\n\r\n');
-      socket.destroy();
       // Hocuspocus treats an empty rejection as "handled, stop here"; a real
       // Error would be rethrown out of its upgrade listener.
       return Promise.reject();
@@ -202,14 +219,29 @@ const server = new Server({
       console.warn(
         `WS reject (bad docName) ip=${sanitizeForLog(ip)} socket=${socketId} name=${sanitizeForLog(documentName).slice(0, 64)}`
       );
-      throw new Error('Invalid document name');
+      denyConnection('Invalid document name', 'invalid-room');
     }
 
     // Reject if the room is being nuked. Otherwise a reconnecting client
     // could hold the doc in memory while we're deleting it.
+    // The client retries this; by then the tombstone is written and sends
+    // it on to the successor room.
     if (roomsBeingNuked.has(documentName)) {
-      throw new Error('Room is being deleted');
+      denyConnection('Room is being deleted', 'room-deleting');
     }
+
+    let rooms = roomsBySocket.get(request);
+    if (!rooms) {
+      rooms = new Set();
+      roomsBySocket.set(request, rooms);
+    }
+    if (!rooms.has(documentName) && rooms.size >= MAX_ROOMS_PER_SOCKET) {
+      console.warn(
+        `WS reject (over per-socket room cap) ip=${sanitizeForLog(ip)} socket=${socketId} cap=${MAX_ROOMS_PER_SOCKET}`
+      );
+      denyConnection('Too many rooms on one connection', 'too-many-rooms');
+    }
+    rooms.add(documentName);
 
     console.log(
       `WS connect room=${sanitizeForLog(documentName)} socket=${socketId} ip=${sanitizeForLog(ip)} per_ip=${wsConnectionsByIp.get(ip) ?? 0}`
@@ -232,7 +264,7 @@ const server = new Server({
       console.warn(
         `WS reject (kicked) room=${sanitizeForLog(documentName)} clientId=${clientId}`
       );
-      throw Object.assign(new Error('Kicked'), { reason: 'kicked' });
+      denyConnection('Kicked', 'kicked');
     }
 
     // A nuked room stays dead. Without this, a client that missed the
@@ -241,14 +273,20 @@ const server = new Server({
     // permission-denied message ("room-deleted:<next>") so it can follow the
     // group to the successor room.
     if (dbAvailable) {
-      const nextRoomId = await getDeletedRoomSuccessor(documentName);
+      let nextRoomId: string | null;
+      try {
+        nextRoomId = await getDeletedRoomSuccessor(documentName);
+      } catch (error) {
+        // Can't tell whether the room was nuked. Refuse for now rather than
+        // risk resurrecting it; the client retries with backoff.
+        console.error('tombstone check failed:', error);
+        denyConnection('Room status unavailable', 'unavailable');
+      }
       if (nextRoomId) {
         console.warn(
           `WS reject (room deleted) room=${sanitizeForLog(documentName)} next=${sanitizeForLog(nextRoomId)}`
         );
-        throw Object.assign(new Error('Room deleted'), {
-          reason: `room-deleted:${nextRoomId}`,
-        });
+        denyConnection('Room deleted', `room-deleted:${nextRoomId}`);
       }
     }
   },
@@ -421,6 +459,11 @@ app.post('/api/activity', async (req, res) => {
   }
 
   try {
+    // A nuke redirects every client, and their unload flush can land during
+    // or after the delete. Don't write rows for a room that's gone.
+    if (roomsBeingNuked.has(roomId) || (await getDeletedRoomSuccessor(roomId))) {
+      return res.json({ success: true, persisted: false });
+    }
     await logActivity(roomId, username, keystrokeCount, inEditor, clientId);
     res.json({ success: true, persisted: true });
   } catch (error) {

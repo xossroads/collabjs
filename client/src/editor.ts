@@ -25,11 +25,10 @@ import { highlightSelectionMatches, searchKeymap } from '@codemirror/search';
 import { closeBrackets, closeBracketsKeymap } from '@codemirror/autocomplete';
 import { yCollab } from 'y-codemirror.next';
 import * as Y from 'yjs';
-import { HocuspocusProvider } from '@hocuspocus/provider';
+import { HocuspocusProvider, WebSocketStatus } from '@hocuspocus/provider';
 import { Awareness } from 'y-protocols/awareness';
-import { getUserColor, getUserColorLight } from './username';
-import { sanitizeRemoteAwareness } from './sanitize';
-import { readableTextOn } from './colors';
+import { getUserColor } from './username';
+import { createEditorAwareness } from './sanitize';
 import type { ThemeDefinition } from './themes';
 
 export interface EditorConfig {
@@ -57,9 +56,30 @@ export interface CollabEditor {
   provider: HocuspocusProvider;
   ydoc: Y.Doc;
   awareness: Awareness;
+  // Read-only view of `awareness` with remote users cleaned and their colors
+  // lit for the current editor theme. Use it to draw anything over the editor.
+  editorAwareness: Awareness;
   destroy: () => void;
+  // Open a fresh socket, re-running server auth. Used after a temporary
+  // denial: the provider never retries a denied connection by itself.
+  reconnect: () => void;
   updateUsername: (username: string) => void;
   setTheme: (theme: ThemeDefinition) => void;
+}
+
+// yCollab's caret name labels have fixed white text. Remote carets are lit
+// light on dark themes and dark on light ones (themedUserColors), so the
+// readable label text depends only on the theme: dark text on dark themes,
+// white on light. (Measured for every hue; a theme rule outranks yCollab's
+// base theme.)
+function caretLabelTheme(editorIsDark: boolean) {
+  return EditorView.theme({
+    '.cm-ySelectionInfo': { color: editorIsDark ? '#1e1e1e' : '#ffffff' },
+  });
+}
+
+function themeExtensions(theme: ThemeDefinition) {
+  return [theme.extension, caretLabelTheme(theme.isDark)];
 }
 
 export function createEditor(config: EditorConfig): CollabEditor {
@@ -74,9 +94,8 @@ export function createEditor(config: EditorConfig): CollabEditor {
   // Create awareness before provider
   const awareness = new Awareness(ydoc);
 
-  // Must be registered before yCollab: its 'change' listener renders remote
-  // carets synchronously from the raw states, so they have to be clean first.
-  const remoteSanitizer = sanitizeRemoteAwareness(awareness, initialTheme.isDark);
+  // yCollab reads peers through this cleaned, theme-lit view.
+  const editorAwareness = createEditorAwareness(awareness, initialTheme.isDark);
 
   // Create Hocuspocus provider with our awareness
   const provider = new HocuspocusProvider({
@@ -98,7 +117,6 @@ export function createEditor(config: EditorConfig): CollabEditor {
   awareness.setLocalStateField('user', {
     name: username,
     color: getUserColor(username),
-    colorLight: getUserColorLight(username),
     clientId: clientId,
   });
 
@@ -154,8 +172,8 @@ export function createEditor(config: EditorConfig): CollabEditor {
     extensions: [
       editorSetup,
       javascript(),
-      themeCompartment.of(initialTheme.extension),
-      yCollab(ytext, awareness, { undoManager: new Y.UndoManager(ytext) }),
+      themeCompartment.of(themeExtensions(initialTheme)),
+      yCollab(ytext, editorAwareness.awareness, { undoManager: new Y.UndoManager(ytext) }),
       keystrokeTracker,
       focusTracker,
     ],
@@ -167,49 +185,44 @@ export function createEditor(config: EditorConfig): CollabEditor {
     parent: container,
   });
 
-  // yCollab draws each remote caret's name label with fixed white text, which
-  // is unreadable on light user colors (yellow, cyan, green). Give each label
-  // whichever of dark/white text contrasts more with its caret color. Labels
-  // are recreated whenever a caret's color changes, so watching for added
-  // nodes is enough. (CodeMirror ignores mutations inside widgets.)
-  const labelObserver = new MutationObserver(() => {
-    view.contentDOM.querySelectorAll<HTMLElement>('.cm-ySelectionInfo').forEach((info) => {
-      const caretColor = info.parentElement?.style.backgroundColor;
-      if (!caretColor) return;
-      const text = readableTextOn(caretColor);
-      if (info.dataset.textOn !== caretColor) {
-        info.style.color = text;
-        info.dataset.textOn = caretColor;
-      }
-    });
-  });
-  labelObserver.observe(view.contentDOM, { childList: true, subtree: true });
-
   // Update function for username changes
   const updateUsername = (newUsername: string) => {
     awareness.setLocalStateField('user', {
       name: newUsername,
       color: getUserColor(newUsername),
-      colorLight: getUserColorLight(newUsername),
       clientId: clientId,
     });
   };
 
   // Cleanup function
   const destroy = () => {
-    labelObserver.disconnect();
     view.destroy();
     provider.disconnect();
     ydoc.destroy();
+  };
+
+  // disconnect() only starts closing the socket, and connect() is a no-op
+  // while it's still open — so wait for the close before connecting.
+  const reconnect = () => {
+    if (provider.configuration.websocketProvider.status === WebSocketStatus.Disconnected) {
+      provider.connect();
+      return;
+    }
+    const onDisconnect = () => {
+      provider.off('disconnect', onDisconnect);
+      provider.connect();
+    };
+    provider.on('disconnect', onDisconnect);
+    provider.disconnect();
   };
 
   // Theme switching function
   const setTheme = (theme: ThemeDefinition) => {
     // Re-light remote users' colors first; the reconfigure below makes
     // yCollab rebuild its caret/selection decorations from them.
-    remoteSanitizer.setEditorDark(theme.isDark);
+    editorAwareness.setEditorDark(theme.isDark);
     view.dispatch({
-      effects: themeCompartment.reconfigure(theme.extension),
+      effects: themeCompartment.reconfigure(themeExtensions(theme)),
     });
   };
 
@@ -218,7 +231,9 @@ export function createEditor(config: EditorConfig): CollabEditor {
     provider,
     ydoc,
     awareness,
+    editorAwareness: editorAwareness.awareness,
     destroy,
+    reconnect,
     updateUsername,
     setTheme,
   };

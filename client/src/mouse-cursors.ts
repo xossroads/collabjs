@@ -77,6 +77,11 @@ export class MouseCursors {
     this.renderCursors();
   };
 
+  // Redraw from current state (e.g. after the editor theme changes colors).
+  refresh() {
+    this.renderCursors();
+  }
+
   private renderCursors() {
     const states = this.awareness.getStates();
     const localClientId = this.awareness.clientID;

@@ -962,7 +962,7 @@ kbd {
   font-family: -apple-system, BlinkMacSystemFont, sans-serif;
   padding: 2px 6px;
   border-radius: 3px 3px 3px 0;
-  color: white;
+  /* text color comes from caretLabelTheme in editor.ts (depends on theme) */
   white-space: nowrap;
   pointer-events: none;
   z-index: 100;

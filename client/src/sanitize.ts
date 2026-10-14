@@ -8,7 +8,8 @@
 // and layout (a 10MB name fans out to every peer and tanks rendering), and
 // CSS injection: y-codemirror.next interpolates color/colorLight straight
 // into inline style attributes on remote carets and selections. Cap and
-// validate at consumption.
+// validate at consumption — our own renderers call sanitizeRemoteUser, and
+// yCollab reads through createEditorAwareness below.
 
 import type { Awareness } from 'y-protocols/awareness';
 import { themedUserColors } from './colors';
@@ -21,17 +22,6 @@ const FALLBACK_COLOR = 'hsl(0, 0%, 50%)';
 // hex colors. Anything else falls back to a neutral grey.
 const COLOR_RE = /^(?:hsl\(\d{1,3},\s*\d{1,3}%,\s*\d{1,3}%\)|#[0-9a-fA-F]{3,8})$/;
 
-// Selection-highlight color: the hsla() form getUserColorLight() generates,
-// or hex. Anything else is derived from the (already validated) color.
-const COLOR_LIGHT_RE =
-  /^(?:hsla\(\d{1,3},\s*\d{1,3}%,\s*\d{1,3}%,\s*(?:0|1|0?\.\d{1,3})\)|#[0-9a-fA-F]{3,8})$/;
-
-function deriveColorLight(color: string): string {
-  if (color.startsWith('hsl(')) return color.replace(/^hsl\((.*)\)$/, 'hsla($1, 0.2)');
-  if (/^#[0-9a-fA-F]{6}$/.test(color)) return color + '33';
-  return 'hsla(0, 0%, 50%, 0.2)';
-}
-
 // The localStorage UUID a peer broadcasts so the host dashboard can match
 // them to their activity stats. Anything that isn't UUID-shaped becomes null
 // (the dashboard falls back to matching by name).
@@ -40,17 +30,11 @@ const CLIENT_ID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 export interface SafeUser {
   name: string;
   color: string;
-  colorLight: string;
   clientId: string | null;
 }
 
 export function sanitizeRemoteUser(value: unknown): SafeUser {
-  const raw = (value ?? {}) as {
-    name?: unknown;
-    color?: unknown;
-    colorLight?: unknown;
-    clientId?: unknown;
-  };
+  const raw = (value ?? {}) as { name?: unknown; color?: unknown; clientId?: unknown };
 
   const name =
     typeof raw.name === 'string' && raw.name.length > 0
@@ -62,17 +46,12 @@ export function sanitizeRemoteUser(value: unknown): SafeUser {
       ? raw.color
       : FALLBACK_COLOR;
 
-  const colorLight =
-    typeof raw.colorLight === 'string' && COLOR_LIGHT_RE.test(raw.colorLight)
-      ? raw.colorLight
-      : deriveColorLight(color);
-
   const clientId =
     typeof raw.clientId === 'string' && CLIENT_ID_RE.test(raw.clientId)
       ? raw.clientId
       : null;
 
-  return { name, color, colorLight, clientId };
+  return { name, color, clientId };
 }
 
 // y-codemirror.next feeds cursor.anchor/head to
@@ -88,76 +67,65 @@ function isSafeCursor(value: unknown): boolean {
   );
 }
 
-// Sanitize every remote awareness state in place as it arrives, so consumers
-// we don't control (y-codemirror.next's caret/selection widgets) only ever
-// see clean values. Must be registered before those consumers: Awareness
-// emits 'change' to listeners in registration order, and yCollab renders
-// synchronously from its listener. Remote state objects are never
-// re-broadcast by us, so mutating them is safe.
+// The awareness that the editor's collaboration layer (yCollab) and the
+// mouse cursors read from: the real one, except getStates() returns cleaned
+// copies of remote states — sanitized user, theme-lit colors (see
+// themedUserColors), and no malformed cursor. The shared states themselves
+// are never modified: y-protocols decides whether an incoming update is a
+// 'change' by deep-comparing it with the stored state, so rewriting stored
+// states made every 15s presence heartbeat look like a change.
 //
-// While here, each user's colors are re-lit for this viewer's editor theme
-// (see themedUserColors). setEditorDark re-applies that to everyone when the
-// theme changes.
-export interface RemoteAwarenessSanitizer {
+// Only the members those two consumers use are provided.
+export interface EditorAwareness {
+  awareness: Awareness;
   setEditorDark(isDark: boolean): void;
 }
 
-export function sanitizeRemoteAwareness(
-  awareness: Awareness,
-  editorIsDark: boolean
-): RemoteAwarenessSanitizer {
+export function createEditorAwareness(awareness: Awareness, editorIsDark: boolean): EditorAwareness {
   let dark = editorIsDark;
-  // Each peer's validated color as they sent it, so a theme change can
-  // re-derive from the original rather than from an already-adapted color.
-  const baseColors = new Map<number, string>();
-  // States already rewritten. setEditorDark re-emits 'change' with the same
-  // state objects so every renderer refreshes; those must not be re-read as
-  // fresh input. A real update from the peer arrives as a new object.
-  const processed = new WeakSet<object>();
+  // Cleaned copy per stored state object; a peer's update replaces the
+  // object, which naturally invalidates its entry.
+  const cache = new WeakMap<object, { dark: boolean; clean: Record<string, unknown> }>();
 
-  const applyTheme = (id: number, state: Record<string, unknown>) => {
-    const base = baseColors.get(id);
-    if (base === undefined || !state.user) return;
-    state.user = { ...(state.user as SafeUser), ...themedUserColors(base, dark) };
+  const clean = (state: Record<string, unknown>): Record<string, unknown> => {
+    const hit = cache.get(state);
+    if (hit && hit.dark === dark) return hit.clean;
+    const out: Record<string, unknown> = { ...state };
+    if ('user' in state) {
+      const user = sanitizeRemoteUser(state.user);
+      out.user = { ...user, ...themedUserColors(user.color, dark) };
+    }
+    if (!isSafeCursor(state.cursor)) delete out.cursor;
+    cache.set(state, { dark, clean: out });
+    return out;
   };
 
-  awareness.on(
-    'change',
-    ({ added, updated, removed }: { added: number[]; updated: number[]; removed: number[] }) => {
-      for (const id of removed) baseColors.delete(id);
-      const states = awareness.getStates();
-      for (const id of [...added, ...updated]) {
-        if (id === awareness.clientID) continue;
-        const state = states.get(id);
-        if (!state || processed.has(state)) continue;
-        processed.add(state);
-        if ('user' in state) {
-          const user = sanitizeRemoteUser(state.user);
-          baseColors.set(id, user.color);
-          state.user = user;
-          applyTheme(id, state);
-        }
-        if (!isSafeCursor(state.cursor)) delete state.cursor;
-      }
-    }
-  );
+  const view = {
+    get doc() {
+      return awareness.doc;
+    },
+    get clientID() {
+      return awareness.clientID;
+    },
+    getLocalState: () => awareness.getLocalState(),
+    setLocalStateField: (field: string, value: unknown) => awareness.setLocalStateField(field, value),
+    getStates: () => {
+      const states = new Map<number, Record<string, unknown>>();
+      awareness.getStates().forEach((state, id) => {
+        states.set(id, id === awareness.clientID ? state : clean(state));
+      });
+      return states;
+    },
+    on: (name: string, fn: (...args: any[]) => void) => awareness.on(name, fn),
+    off: (name: string, fn: (...args: any[]) => void) => awareness.off(name, fn),
+  };
 
   return {
+    awareness: view as unknown as Awareness,
+    // Takes effect on the next read; the caller redraws (the theme
+    // reconfigure makes yCollab rebuild its decorations).
     setEditorDark(isDark: boolean) {
-      if (isDark === dark) return;
       dark = isDark;
-      const ids: number[] = [];
-      awareness.getStates().forEach((state, id) => {
-        if (id === awareness.clientID || !baseColors.has(id)) return;
-        applyTheme(id, state);
-        ids.push(id);
-      });
-      // Local-only nudge so carets, badges and mouse cursors redraw with
-      // the new colors. Providers broadcast on 'update', not 'change', so
-      // nothing goes over the wire.
-      if (ids.length > 0) {
-        awareness.emit('change', [{ added: [], updated: ids, removed: [] }, 'local']);
-      }
     },
   };
 }

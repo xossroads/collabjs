@@ -127,10 +127,30 @@ async function init() {
 
   // Tear down so the provider doesn't keep reconnecting into the ban, then
   // show the (non-dismissable) overlay.
+  let kicked = false;
   const showKicked = () => {
+    kicked = true;
+    // Stop everything that writes to the room: the console (and the sandbox
+    // it may still be running code in) and mouse cursors, then the editor.
+    sharedConsole.destroy();
+    mouseCursors.destroy();
     activityTracker.destroy();
     editor.destroy();
     document.getElementById('kicked-overlay')!.classList.remove('hidden');
+  };
+
+  // Reconnect after a temporary server denial: a fresh socket re-runs auth.
+  // Backoff 2s → 30s, reset once a connection authenticates.
+  const AUTH_RETRY_MIN_MS = 2000;
+  const AUTH_RETRY_MAX_MS = 30000;
+  let authRetryMs = AUTH_RETRY_MIN_MS;
+  const retryConnection = () => {
+    const delay = authRetryMs;
+    authRetryMs = Math.min(authRetryMs * 2, AUTH_RETRY_MAX_MS);
+    window.setTimeout(() => {
+      if (kicked) return;
+      editor.reconnect();
+    }, delay);
   };
 
   let editor: CollabEditor = createEditor({
@@ -178,7 +198,13 @@ async function init() {
       if (nextRoomId) {
         clearHostToken(roomId);
         window.location.replace(`/room/${nextRoomId}`);
+        return;
       }
+      // Anything else is temporary (room mid-deletion, server briefly unable
+      // to check the room). The provider never retries a denial on its own,
+      // so reconnect with backoff — otherwise edits would silently stop
+      // syncing.
+      retryConnection();
     },
   });
 
@@ -186,6 +212,7 @@ async function init() {
   const applyTheme = (theme: typeof initialTheme) => {
     themeSelect.value = theme.id;
     editor.setTheme(theme);
+    mouseCursors.refresh();
     saveTheme(theme.id);
   };
   themeSelect.addEventListener('change', () => {
@@ -204,7 +231,11 @@ async function init() {
   const sharedConsole = new SharedConsole(editor.ydoc, outputContent, () => username);
 
   // Initialize mouse cursor tracking
-  const mouseCursors = new MouseCursors(editor.awareness, editorContainer);
+  // Drawn over the editor, so it reads the same theme-lit view as the carets.
+  const mouseCursors = new MouseCursors(editor.editorAwareness, editorContainer);
+  editor.provider.on('authenticated', () => {
+    authRetryMs = AUTH_RETRY_MIN_MS;
+  });
 
   // Setup awareness listener for connected users display
   const cleanupAwareness = setupAwarenessListener(

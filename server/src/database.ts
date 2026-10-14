@@ -14,6 +14,14 @@ const pool = new pg.Pool({
   connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/collabjs',
 });
 
+// An idle pooled connection that dies (database restarted, network blip)
+// makes the pool emit 'error'. Unhandled, that crashes the process; the pool
+// already discards the dead client and the next query reconnects, so logging
+// is all that's needed.
+pool.on('error', (error) => {
+  console.error('Idle database connection lost:', error.message);
+});
+
 export async function getDocument(roomId: string): Promise<Buffer | null> {
   const result = await pool.query(
     'SELECT data FROM documents WHERE room_id = $1',
